@@ -1,0 +1,15 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Format Go files on save",
+      "trigger": "PostFileSave",
+      "description": "Runs gofmt on Go files whenever they are saved to ensure consistent formatting.",
+      "matcher": "\\.go$",
+      "action": {
+        "type": "command",
+        "command": "gofmt -w \"$KIRO_FILE_PATH\""
+      }
+    }
+  ]
+}
