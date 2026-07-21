@@ -1,0 +1,597 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1.1 Initialize Go module and directory structure": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282097
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654292352
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654575977
+      }
+    ],
+    "1.2 Implement JSON-RPC 2.0 types and serialization": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282245
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654585540
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654866134
+      }
+    ],
+    "1.4 Implement the Dispatcher with panic recovery": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282560
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654881320
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784655006739
+      }
+    ],
+    "2.1 Define Transport interface and implement Stdio transport": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282614
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784655012050
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784656233171
+      }
+    ],
+    "2.2 Implement HTTP+SSE transport": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282665
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784655013083
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784656233789
+      }
+    ],
+    "3.1 Implement configuration loading and validation": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282719
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784655014004
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784656234514
+      }
+    ],
+    "3.3 Implement CLI entry point": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282770
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784656239561
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658149477
+      }
+    ],
+    "4. Checkpoint - Core foundation": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282832
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658155046
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658356573
+      }
+    ],
+    "5.1 Define LLM interface and implement HeuristicProvider": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282886
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658361553
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658675861
+      }
+    ],
+    "5.2 Implement BedrockProvider": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282946
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658362356
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658676536
+      }
+    ],
+    "5.3 Implement LLMRouter with fallback logic": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654282998
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658681034
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658893716
+      }
+    ],
+    "6.1 Implement secret pattern scanner": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283052
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658899860
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659516795
+      }
+    ],
+    "6.3 Implement .envguardignore parser": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283113
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658900880
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659517567
+      }
+    ],
+    "6.5 Implement secret migrator": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283167
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658901844
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659518306
+      }
+    ],
+    "6.6 Implement Env-Guard handler and replacement logic": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283428
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659523337
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659761956
+      }
+    ],
+    "7. Checkpoint - Env-Guard complete": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283551
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659769361
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659860796
+      }
+    ],
+    "8.1 Implement manifest parser for npm and pip": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283681
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659877996
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660040928
+      }
+    ],
+    "8.3 Implement OSV.dev client": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283733
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659878254
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660041238
+      }
+    ],
+    "8.4 Implement Vuln-Scanner handler": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283786
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660047731
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660271206
+      }
+    ],
+    "9.1 Implement AST-based import graph builder": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283845
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660277711
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660546070
+      }
+    ],
+    "9.3 Implement architecture rules engine": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283897
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660278549
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660546721
+      }
+    ],
+    "9.5 Implement Clean-Arch handler": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654283950
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660552127
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660724619
+      }
+    ],
+    "10. Checkpoint - Clean-Arch complete": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284013
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660731073
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661002740
+      }
+    ],
+    "11.1 Implement expensive pattern detector": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284065
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660731947
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661003614
+      }
+    ],
+    "11.2 Implement cost estimator": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284122
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660732901
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661004324
+      }
+    ],
+    "11.4 Implement FinOps handler": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284178
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661010560
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661202965
+      }
+    ],
+    "12.1 Implement timeout wrappers for external calls": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284228
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661011451
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661203769
+      }
+    ],
+    "12.3 Implement structured logging": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284279
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661012152
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661204527
+      }
+    ],
+    "13.1 Implement MCP initialize handshake": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284335
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661210610
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661635442
+      }
+    ],
+    "13.2 Wire all modules into the dispatcher": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284385
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661211589
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661636104
+      }
+    ],
+    "14. Final checkpoint - Full integration": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784654284444
+      },
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661642497
+      }
+    ],
+    "1. Project scaffolding and core types": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784655006828
+      }
+    ],
+    "2. Transport layer": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784656233851
+      }
+    ],
+    "3. Configuration and CLI": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658149556
+      }
+    ],
+    "5. LLM interface and providers": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784658893832
+      }
+    ],
+    "6. Env-Guard module": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784659762739
+      }
+    ],
+    "8. Vuln-Scanner module": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660271267
+      }
+    ],
+    "9. Clean-Arch module": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784660724691
+      }
+    ],
+    "11. FinOps Guardrail module": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661203042
+      }
+    ],
+    "12. Timeout and resilience": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661204662
+      }
+    ],
+    "13. MCP protocol integration": [
+      {
+        "executionId": "b2db5c7f-d644-4b89-a7cc-36e04ace3c2d",
+        "chatSessionId": "sess_2e440a57-48b1-4a6f-b9c5-b32b5a35b065",
+        "timestamp": 1784661636214
+      }
+    ]
+  }
+}
