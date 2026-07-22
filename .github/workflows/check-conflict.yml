@@ -1,0 +1,44 @@
+name: Check Conflicts
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  check-conflicts:
+    name: Check Merge Conflicts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch develop branch
+        run: git fetch origin develop
+
+      - name: Check for merge conflicts
+        run: |
+          echo "Attempting trial merge with develop..."
+          git config user.email "ci@github.com"
+          git config user.name "CI Bot"
+          
+          if ! git merge origin/develop --no-commit --no-ff; then
+            echo "::error::Merge conflicts detected! Please rebase or merge develop into your branch."
+            git merge --abort
+            exit 1
+          fi
+          
+          echo "No merge conflicts found."
+          git merge --abort 2>/dev/null || true
+
+      - name: Check build integrity after merge
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Verify merged code compiles
+        run: |
+          git merge origin/develop --no-commit --no-ff 2>/dev/null || true
+          go build ./...
+          echo "Build passes after merge - no breaking changes detected."

@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	smtypes "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/luiferdev/kiroguard/internal/rpc"
+	"golang.org/x/time/rate"
 )
 
 // --- Helper to create params JSON ---
@@ -27,7 +30,7 @@ func makeParams(t *testing.T, input EnvGuardInput) json.RawMessage {
 // --- Tests ---
 
 func TestHandle_EmptyDiff(t *testing.T) {
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	params := makeParams(t, EnvGuardInput{Diff: ""})
 	result, err := handler.Handle(context.Background(), params)
@@ -48,7 +51,7 @@ func TestHandle_EmptyDiff(t *testing.T) {
 }
 
 func TestHandle_NoSecrets(t *testing.T) {
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/main.go
 +++ b/main.go
@@ -73,7 +76,7 @@ func TestHandle_NoSecrets(t *testing.T) {
 }
 
 func TestHandle_DetectsSecret_NoMigrator(t *testing.T) {
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/config.go
 +++ b/config.go
@@ -137,7 +140,7 @@ func TestHandle_DetectsSecret_WithMigrator(t *testing.T) {
 		nil,
 	)
 
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/app.go
 +++ b/app.go
@@ -188,7 +191,7 @@ func TestHandle_MigratorError_StillBlocked(t *testing.T) {
 		nil,
 	)
 
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/secrets.go
 +++ b/secrets.go
@@ -236,7 +239,7 @@ AKIAIOSFODNN7EXAMPLE`
 		t.Fatalf("failed to create ignore parser: %v", err)
 	}
 
-	handler := NewEnvGuardHandler(NewSecretScanner(), ignore, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), ignore, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/test.go
 +++ b/test.go
@@ -270,7 +273,7 @@ func TestHandle_PartialIgnoreFilter(t *testing.T) {
 		t.Fatalf("failed to create ignore parser: %v", err)
 	}
 
-	handler := NewEnvGuardHandler(NewSecretScanner(), ignore, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), ignore, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/multi.go
 +++ b/multi.go
@@ -299,7 +302,7 @@ func TestHandle_PartialIgnoreFilter(t *testing.T) {
 }
 
 func TestHandle_InvalidParams(t *testing.T) {
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	// Invalid JSON
 	result, err := handler.Handle(context.Background(), json.RawMessage(`{invalid`))
@@ -312,7 +315,7 @@ func TestHandle_InvalidParams(t *testing.T) {
 }
 
 func TestHandle_MultipleFindings(t *testing.T) {
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	diff := `--- a/multi.go
 +++ b/multi.go
@@ -349,7 +352,7 @@ func TestHandle_MultipleFindings(t *testing.T) {
 }
 
 func TestHandle_ReplacementDoesNotContainSecret(t *testing.T) {
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	secrets := []string{
 		"AKIAIOSFODNN7EXAMPLE",
@@ -399,7 +402,7 @@ func TestSanitizeEnvName(t *testing.T) {
 
 func TestRegisterEnvGuard(t *testing.T) {
 	dispatcher := rpc.NewDispatcher()
-	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil)
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, nil, 5, rate.NewLimiter(rate.Inf, 0))
 
 	RegisterEnvGuard(dispatcher, handler)
 
@@ -462,5 +465,376 @@ func TestGenerateReplacement(t *testing.T) {
 				t.Errorf("generateReplacement() = %q, want %q", got, expected)
 			}
 		})
+	}
+}
+
+// --- Concurrency Tests ---
+
+func TestMigrateAll_Concurrent(t *testing.T) {
+	// Each migration takes 100ms. With 5 findings and workerCount=5,
+	// all should run in parallel, completing in ~100ms total (not 500ms sequential).
+	delay := 100 * time.Millisecond
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			time.Sleep(delay)
+			return &secretsmanager.CreateSecretOutput{
+				ARN: aws.String("arn:aws:secretsmanager:us-east-1:123:secret:test"),
+			}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(rate.Inf, 0))
+
+	// Build a diff with 5 distinct secrets
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,7 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
++const key3 = "AKIAIOSFODNN7EXAMPL3"
++const key4 = "AKIAIOSFODNN7EXAMPL4"
++const key5 = "AKIAIOSFODNN7EXAMPL5"
+ var x = 1
+`
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	start := time.Now()
+	result, err := handler.Handle(context.Background(), params)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := result.(*EnvGuardOutput)
+	if len(output.Findings) != 5 {
+		t.Fatalf("expected 5 findings, got %d", len(output.Findings))
+	}
+
+	// If sequential, would take 500ms. Parallel with 5 workers should be ~100ms.
+	// Allow generous margin for CI flakiness.
+	if elapsed >= 400*time.Millisecond {
+		t.Errorf("expected parallel execution < 400ms, took %v", elapsed)
+	}
+}
+
+func TestMigrateAll_WorkerCountBounds(t *testing.T) {
+	// Track max concurrent goroutines using atomic counter.
+	var active atomic.Int32
+	var maxActive atomic.Int32
+
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			cur := active.Add(1)
+			// Update max if this is a new high watermark
+			for {
+				old := maxActive.Load()
+				if cur <= old {
+					break
+				}
+				if maxActive.CompareAndSwap(old, cur) {
+					break
+				}
+			}
+			time.Sleep(50 * time.Millisecond)
+			active.Add(-1)
+			return &secretsmanager.CreateSecretOutput{
+				ARN: aws.String("arn:aws:secretsmanager:us-east-1:123:secret:test"),
+			}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	// workerCount=2, 5 findings
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 2, rate.NewLimiter(rate.Inf, 0))
+
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,7 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
++const key3 = "AKIAIOSFODNN7EXAMPL3"
++const key4 = "AKIAIOSFODNN7EXAMPL4"
++const key5 = "AKIAIOSFODNN7EXAMPL5"
+ var x = 1
+`
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	_, err := handler.Handle(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if maxActive.Load() > 2 {
+		t.Errorf("expected max concurrent goroutines <= 2, got %d", maxActive.Load())
+	}
+}
+
+func TestMigrateAll_ContextCancellation(t *testing.T) {
+	// Each migration takes 200ms. Cancel context after 50ms.
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			select {
+			case <-time.After(200 * time.Millisecond):
+				return &secretsmanager.CreateSecretOutput{
+					ARN: aws.String("arn:aws:secretsmanager:us-east-1:123:secret:test"),
+				}, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(rate.Inf, 0))
+
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,7 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
++const key3 = "AKIAIOSFODNN7EXAMPL3"
++const key4 = "AKIAIOSFODNN7EXAMPL4"
++const key5 = "AKIAIOSFODNN7EXAMPL5"
+ var x = 1
+`
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	var result interface{}
+	var handleErr error
+
+	go func() {
+		result, handleErr = handler.Handle(ctx, params)
+		close(done)
+	}()
+
+	// Verify it doesn't hang — should complete within 1 second
+	select {
+	case <-done:
+		// good
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler hung after context cancellation")
+	}
+
+	if handleErr != nil {
+		t.Fatalf("unexpected error: %v", handleErr)
+	}
+
+	output := result.(*EnvGuardOutput)
+	// At least some findings should have MigrationErr containing "context"
+	hasContextErr := false
+	for _, f := range output.Findings {
+		if strings.Contains(f.MigrationErr, "context") {
+			hasContextErr = true
+			break
+		}
+	}
+	if !hasContextErr {
+		t.Error("expected at least one finding with context-related MigrationErr")
+	}
+}
+
+func TestMigrateAll_IndependentErrors(t *testing.T) {
+	// Fail only on the second secret (index 1 by finding order).
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			// Check SecretString to identify which finding this is
+			if params.SecretString != nil && strings.Contains(*params.SecretString, "EXAMPL2") {
+				return nil, fmt.Errorf("SimulatedFailure: access denied")
+			}
+			return &secretsmanager.CreateSecretOutput{
+				ARN: aws.String("arn:aws:secretsmanager:us-east-1:123:secret:ok"),
+			}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(rate.Inf, 0))
+
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,5 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
++const key3 = "AKIAIOSFODNN7EXAMPL3"
+ var x = 1
+`
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	result, err := handler.Handle(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := result.(*EnvGuardOutput)
+	if len(output.Findings) != 3 {
+		t.Fatalf("expected 3 findings, got %d", len(output.Findings))
+	}
+
+	// Finding 0: should succeed
+	if output.Findings[0].MigrationErr != "" {
+		t.Errorf("finding[0]: expected no error, got %q", output.Findings[0].MigrationErr)
+	}
+
+	// Finding 1: should fail
+	if output.Findings[1].MigrationErr == "" {
+		t.Error("finding[1]: expected migration error")
+	}
+	if !strings.Contains(output.Findings[1].MigrationErr, "SimulatedFailure") {
+		t.Errorf("finding[1]: expected SimulatedFailure, got %q", output.Findings[1].MigrationErr)
+	}
+
+	// Finding 2: should succeed (not blocked by finding 1's failure)
+	if output.Findings[2].MigrationErr != "" {
+		t.Errorf("finding[2]: expected no error, got %q", output.Findings[2].MigrationErr)
+	}
+}
+
+func TestMigrateAll_OrderPreserved(t *testing.T) {
+	// Each finding takes a different amount of time, but output order should match input order.
+	delays := []time.Duration{80 * time.Millisecond, 10 * time.Millisecond, 50 * time.Millisecond, 30 * time.Millisecond, 60 * time.Millisecond}
+	callIdx := atomic.Int32{}
+
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			// Determine which secret this is by checking SecretString content
+			idx := -1
+			if params.SecretString != nil {
+				val := *params.SecretString
+				for i := 1; i <= 5; i++ {
+					if strings.Contains(val, fmt.Sprintf("EXAMPL%d", i)) {
+						idx = i - 1
+						break
+					}
+				}
+			}
+			if idx >= 0 && idx < len(delays) {
+				time.Sleep(delays[idx])
+			}
+			callIdx.Add(1)
+			arn := fmt.Sprintf("arn:aws:secretsmanager:us-east-1:123:secret:finding-%d", idx)
+			return &secretsmanager.CreateSecretOutput{
+				ARN: aws.String(arn),
+			}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(rate.Inf, 0))
+
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,7 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
++const key3 = "AKIAIOSFODNN7EXAMPL3"
++const key4 = "AKIAIOSFODNN7EXAMPL4"
++const key5 = "AKIAIOSFODNN7EXAMPL5"
+ var x = 1
+`
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	result, err := handler.Handle(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := result.(*EnvGuardOutput)
+	if len(output.Findings) != 5 {
+		t.Fatalf("expected 5 findings, got %d", len(output.Findings))
+	}
+
+	// Verify that findings are still in order: finding[i] should have the ARN for finding-i
+	for i, f := range output.Findings {
+		expectedARN := fmt.Sprintf("arn:aws:secretsmanager:us-east-1:123:secret:finding-%d", i)
+		if f.MigratedARN != expectedARN {
+			t.Errorf("finding[%d]: expected ARN %q, got %q (order not preserved)", i, expectedARN, f.MigratedARN)
+		}
+	}
+}
+
+func TestMigrateAll_SingleWorker(t *testing.T) {
+	// WorkerCount=1 means sequential execution. 3 findings × 50ms = >= 150ms total.
+	delay := 50 * time.Millisecond
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			time.Sleep(delay)
+			return &secretsmanager.CreateSecretOutput{
+				ARN: aws.String("arn:aws:secretsmanager:us-east-1:123:secret:test"),
+			}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	// workerCount=1 — strictly sequential
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 1, rate.NewLimiter(rate.Inf, 0))
+
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,5 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
++const key3 = "AKIAIOSFODNN7EXAMPL3"
+ var x = 1
+`
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	start := time.Now()
+	result, err := handler.Handle(context.Background(), params)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := result.(*EnvGuardOutput)
+	if len(output.Findings) != 3 {
+		t.Fatalf("expected 3 findings, got %d", len(output.Findings))
+	}
+
+	// With 1 worker, 3 secrets × 50ms = at least 150ms
+	if elapsed < 150*time.Millisecond {
+		t.Errorf("expected sequential execution >= 150ms with 1 worker, took %v", elapsed)
 	}
 }
