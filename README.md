@@ -30,7 +30,7 @@
     <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT">
   </a>
   <a href="https://github.com/kronosoft-tech/kiroguard">
-    <img src="https://img.shields.io/github/stars/luiferdev/kiroguard" alt="Stars">
+    <img src="https://img.shields.io/github/stars/kronosoft-tech/kiroguard" alt="Stars">
   </a>
 </p>
 
