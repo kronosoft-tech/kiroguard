@@ -18,6 +18,7 @@ import (
 	"github.com/luiferdev/kiroguard/internal/rpc"
 	"github.com/luiferdev/kiroguard/internal/transport"
 	"github.com/luiferdev/kiroguard/internal/vulnscanner"
+	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -77,7 +78,8 @@ func main() {
 	if _, statErr := os.Stat(cfg.EnvGuard.IgnoreFile); statErr == nil {
 		ignoreParser, _ = envguard.LoadIgnoreFile(cfg.EnvGuard.IgnoreFile)
 	}
-	envHandler := envguard.NewEnvGuardHandler(scanner, ignoreParser, nil)
+	limiter := rate.NewLimiter(rate.Limit(cfg.EnvGuard.RateLimit), cfg.EnvGuard.RateBurst)
+	envHandler := envguard.NewEnvGuardHandler(scanner, ignoreParser, nil, cfg.EnvGuard.WorkerCount, limiter)
 	envguard.RegisterEnvGuard(dispatcher, envHandler)
 
 	// Vuln-Scanner: dependency vulnerability scanning.
