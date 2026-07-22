@@ -8,14 +8,18 @@ import (
 	"strings"
 
 	"github.com/luiferdev/kiroguard/internal/rpc"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
 
 // EnvGuardHandler wires together the secret scanner, ignore filter, and migrator
 // to provide the complete Env-Guard MCP tool.
 type EnvGuardHandler struct {
-	scanner  *SecretScanner
-	ignore   *IgnoreParser // may be nil if no ignore file
-	migrator *Migrator     // may be nil if AWS not configured
+	scanner     *SecretScanner
+	ignore      *IgnoreParser // may be nil if no ignore file
+	migrator    *Migrator     // may be nil if AWS not configured
+	workerCount int           // max concurrent migration goroutines
+	limiter     *rate.Limiter // shared rate limiter for AWS API calls
 }
 
 // EnvGuardInput represents the input parameters for the envguard/scan tool.
@@ -33,11 +37,13 @@ type EnvGuardOutput struct {
 
 // NewEnvGuardHandler creates a new EnvGuardHandler with the given components.
 // ignore and migrator may be nil if not available.
-func NewEnvGuardHandler(scanner *SecretScanner, ignore *IgnoreParser, migrator *Migrator) *EnvGuardHandler {
+func NewEnvGuardHandler(scanner *SecretScanner, ignore *IgnoreParser, migrator *Migrator, workerCount int, limiter *rate.Limiter) *EnvGuardHandler {
 	return &EnvGuardHandler{
-		scanner:  scanner,
-		ignore:   ignore,
-		migrator: migrator,
+		scanner:     scanner,
+		ignore:      ignore,
+		migrator:    migrator,
+		workerCount: workerCount,
+		limiter:     limiter,
 	}
 }
 
@@ -102,25 +108,18 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 		}, nil
 	}
 
-	// Step 4: Process findings - migrate and generate replacements
+	// Step 4: Migrate findings concurrently (if migrator available)
+	if h.migrator != nil {
+		h.migrateAll(ctx, findings)
+	}
+
+	// Step 5: Generate replacements and clear secret values (sequential, post-migration)
 	for i := range findings {
-		if h.migrator != nil {
-			arn, err := h.migrator.Migrate(ctx, findings[i])
-			if err != nil {
-				findings[i].MigrationErr = err.Error()
-			} else {
-				findings[i].MigratedARN = arn
-			}
-		}
-
-		// Generate replacement snippet (does not contain original secret)
 		findings[i].Replacement = generateReplacement(findings[i])
-
-		// Clear the secret value from the output to avoid leaking it
 		findings[i].SecretValue = ""
 	}
 
-	// Step 5: Build message
+	// Step 6: Build message
 	message := fmt.Sprintf("Blocked: %d secret(s) detected", len(findings))
 	if h.migrator == nil {
 		message += " (automatic migration unavailable - AWS not configured)"
@@ -131,6 +130,35 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 		Findings: findings,
 		Message:  message,
 	}, nil
+}
+
+// migrateAll executes all migrations concurrently using a bounded worker pool.
+// Each finding is processed independently; errors are recorded per-finding.
+// The method blocks until all goroutines complete.
+func (h *EnvGuardHandler) migrateAll(ctx context.Context, findings []SecretFinding) {
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(h.workerCount)
+
+	for i := range findings {
+		i := i // capture loop variable
+		g.Go(func() error {
+			// Rate limit before calling AWS
+			if err := h.limiter.Wait(gCtx); err != nil {
+				findings[i].MigrationErr = err.Error()
+				return nil // don't cancel others
+			}
+
+			arn, err := h.migrator.Migrate(gCtx, findings[i])
+			if err != nil {
+				findings[i].MigrationErr = err.Error()
+			} else {
+				findings[i].MigratedARN = arn
+			}
+			return nil // never return error — independent error handling
+		})
+	}
+
+	g.Wait()
 }
 
 // RegisterEnvGuard registers the envguard/scan tool handler with the RPC dispatcher.

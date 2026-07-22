@@ -33,9 +33,12 @@ type LLMConfig struct {
 
 // EnvGuardConfig configures the Env-Guard secrets module.
 type EnvGuardConfig struct {
-	IgnoreFile      string `yaml:"ignore_file"`      // default: ".envguardignore"
-	MigrationTarget string `yaml:"migration_target"` // "secrets_manager" | "ssm"
-	SSMPrefix       string `yaml:"ssm_prefix"`       // default: "/kiroguard/"
+	IgnoreFile      string  `yaml:"ignore_file"`      // default: ".envguardignore"
+	MigrationTarget string  `yaml:"migration_target"` // "secrets_manager" | "ssm"
+	SSMPrefix       string  `yaml:"ssm_prefix"`       // default: "/kiroguard/"
+	WorkerCount     int     `yaml:"worker_count"`     // max concurrent migration workers (default: 5)
+	RateLimit       float64 `yaml:"rate_limit"`       // AWS API calls per second (default: 10.0)
+	RateBurst       int     `yaml:"rate_burst"`       // burst size for rate limiter (default: 5)
 }
 
 // FinOpsConfig configures the FinOps Guardrail module.
@@ -108,6 +111,21 @@ func validate(cfg *Config) error {
 		if cfg.EnvGuard.MigrationTarget != "secrets_manager" && cfg.EnvGuard.MigrationTarget != "ssm" {
 			errs = append(errs, "envguard.migration_target: must be 'secrets_manager' or 'ssm'")
 		}
+	}
+
+	// envguard.worker_count
+	if cfg.EnvGuard.WorkerCount < 1 {
+		errs = append(errs, "envguard.worker_count: must be greater than 0")
+	}
+
+	// envguard.rate_limit
+	if cfg.EnvGuard.RateLimit <= 0 {
+		errs = append(errs, "envguard.rate_limit: must be greater than 0")
+	}
+
+	// envguard.rate_burst
+	if cfg.EnvGuard.RateBurst < 1 {
+		errs = append(errs, "envguard.rate_burst: must be greater than 0")
 	}
 
 	if len(errs) > 0 {
