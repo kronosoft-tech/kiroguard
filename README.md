@@ -14,13 +14,13 @@
 </pre>
 
 <p align="center">
-  <a href="https://pkg.go.dev/github.com/luiferdev/kiroguard">
+  <a href="https://pkg.go.dev/github.com/kronosoft-tech/kiroguard">
     <img src="https://pkg.go.dev/badge/github.com/luiferdev/kiroguard.svg" alt="Go Reference">
   </a>
-  <a href="https://github.com/luiferdev/kiroguard/actions/workflows/test.yml">
-    <img src="https://github.com/luiferdev/kiroguard/actions/workflows/test.yml/badge.svg" alt="Tests">
+  <a href="https://github.com/kronosoft-tech/kiroguard/actions/workflows/test.yml">
+    <img src="https://github.com/kronosoft-tech/kiroguard/actions/workflows/test.yml/badge.svg" alt="Tests">
   </a>
-  <a href="https://github.com/luiferdev/kiroguard/releases">
+  <a href="https://github.com/kronosoft-tech/kiroguard/releases">
     <img src="https://img.shields.io/github/v/release/luiferdev/kiroguard?include_prereleases&sort=semver" alt="Release">
   </a>
   <a href="https://goreportcard.com/report/github.com/luiferdev/kiroguard">
@@ -29,7 +29,7 @@
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT">
   </a>
-  <a href="https://github.com/luiferdev/kiroguard">
+  <a href="https://github.com/kronosoft-tech/kiroguard">
     <img src="https://img.shields.io/github/stars/luiferdev/kiroguard" alt="Stars">
   </a>
 </p>
