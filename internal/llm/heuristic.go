@@ -3,6 +3,8 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"text/template"
 )
@@ -44,6 +46,12 @@ func NewHeuristicProvider() *HeuristicProvider {
 func (h *HeuristicProvider) Complete(_ context.Context, p Prompt) (*LLMResponse, error) {
 	metadata := make(map[string]string)
 
+	// Structured-output contract: emit strict JSON with ai_explanation and
+	// suggested_fix_diff so callers get the same shape as the Bedrock backend.
+	if p.System == StructuredExplanationSystemPrompt {
+		return h.completeStructured(p.User, metadata)
+	}
+
 	// Check if System specifies a template name.
 	if strings.HasPrefix(p.System, templatePrefix) {
 		name := strings.TrimPrefix(p.System, templatePrefix)
@@ -65,6 +73,38 @@ func (h *HeuristicProvider) Complete(_ context.Context, p Prompt) (*LLMResponse,
 	// Fallback: return the User prompt as-is.
 	return &LLMResponse{
 		Text:     p.User,
+		Metadata: metadata,
+	}, nil
+}
+
+// completeStructured synthesizes a StructuredExplanation from the key=value data
+// in the User prompt and returns it as a strict JSON body. The heuristic backend
+// cannot produce a real refactor diff, so suggested_fix_diff is left empty.
+func (h *HeuristicProvider) completeStructured(user string, metadata map[string]string) (*LLMResponse, error) {
+	data := parseTemplateData(user)
+
+	explanation := strings.TrimSpace(data["Description"])
+	from := data["FromPkg"]
+	imp := data["Import"]
+	switch {
+	case explanation != "" && from != "" && imp != "":
+		explanation = fmt.Sprintf("%s. Package %q must not import %q.", explanation, from, imp)
+	case explanation == "" && from != "" && imp != "":
+		explanation = fmt.Sprintf("Package %q must not import %q.", from, imp)
+	case explanation == "":
+		explanation = "Architecture rule violation detected."
+	}
+
+	body, err := json.Marshal(StructuredExplanation{
+		AIExplanation: explanation,
+		SuggestedFix:  "",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal structured explanation: %w", err)
+	}
+
+	return &LLMResponse{
+		Text:     string(body),
 		Metadata: metadata,
 	}, nil
 }

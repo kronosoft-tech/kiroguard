@@ -65,9 +65,18 @@ func NewBedrockProvider(ctx context.Context, region string, modelID string) (*Be
 
 // Complete sends a prompt to Bedrock and returns the response.
 func (b *BedrockProvider) Complete(ctx context.Context, p Prompt) (*LLMResponse, error) {
+	// Structured-output requests may carry a unified diff, so give them a larger
+	// token budget to avoid truncating the JSON payload. The system prompt itself
+	// (StructuredExplanationSystemPrompt) is forwarded unchanged so Claude emits
+	// strict JSON with ai_explanation and suggested_fix_diff.
+	maxTokens := 1024
+	if p.System == StructuredExplanationSystemPrompt {
+		maxTokens = 2048
+	}
+
 	payload := bedrockRequest{
 		AnthropicVersion: "bedrock-2023-05-31",
-		MaxTokens:        1024,
+		MaxTokens:        maxTokens,
 		System:           p.System,
 		Messages: []bedrockMessage{
 			{Role: "user", Content: p.User},

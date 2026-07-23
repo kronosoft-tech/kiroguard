@@ -24,7 +24,12 @@ func Default() *Config {
 			DefaultRPH: 1000,
 		},
 		CleanArch: CleanArchConfig{
-			RulesFile: ".cleanarch.yaml",
+			RulesFile:                ".cleanarch.yaml",
+			TimeoutMs:                3000,
+			EnrichTimeoutMs:          1500,
+			MaxConcurrent:            5,
+			MaxEnrichmentsPerRequest: 25,
+			MetricsIntervalMs:        60000,
 		},
 	}
 }
