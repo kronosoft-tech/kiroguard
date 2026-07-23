@@ -38,9 +38,10 @@ type EnvGuardConfig struct {
 	IgnoreFile      string  `yaml:"ignore_file"`      // default: ".envguardignore"
 	MigrationTarget string  `yaml:"migration_target"` // "secrets_manager" | "ssm"
 	SSMPrefix       string  `yaml:"ssm_prefix"`       // default: "/kiroguard/"
-	WorkerCount     int     `yaml:"worker_count"`     // max concurrent migration workers (default: 5)
-	RateLimit       float64 `yaml:"rate_limit"`       // AWS API calls per second (default: 10.0)
-	RateBurst       int     `yaml:"rate_burst"`       // burst size for rate limiter (default: 5)
+	WorkerCount      int     `yaml:"worker_count"`        // max concurrent migration workers (default: 5)
+	RateLimit        float64 `yaml:"rate_limit"`          // AWS API calls per second (default: 10.0)
+	RateBurst        int     `yaml:"rate_burst"`          // burst size for rate limiter (default: 5)
+	MetricsIntervalMs int    `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
 }
 
 // FinOpsConfig configures the FinOps Guardrail module.

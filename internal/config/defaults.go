@@ -16,9 +16,10 @@ func Default() *Config {
 			IgnoreFile:      ".envguardignore",
 			MigrationTarget: "secrets_manager",
 			SSMPrefix:       "/kiroguard/",
-			WorkerCount:     5,
-			RateLimit:       10.0,
-			RateBurst:       5,
+			WorkerCount:       5,
+			RateLimit:         10.0,
+			RateBurst:         5,
+			MetricsIntervalMs: 60000,
 		},
 		FinOps: FinOpsConfig{
 			DefaultRPH: 1000,
