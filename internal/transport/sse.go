@@ -2,12 +2,17 @@ package transport
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/luiferdev/kiroguard/internal/rpc"
@@ -15,8 +20,20 @@ import (
 
 // sseClient represents a connected SSE client with a channel for sending events.
 type sseClient struct {
+	id     string
 	events chan []byte
 	done   chan struct{}
+}
+
+// newSessionID returns a random hex session identifier for an SSE connection.
+func newSessionID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		// Fall back to a time-based id; collisions are astronomically unlikely
+		// and this path only triggers if the OS RNG fails.
+		return fmt.Sprintf("sess-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }
 
 // SSETransport implements the Transport interface using HTTP with Server-Sent Events.
@@ -26,15 +43,68 @@ type SSETransport struct {
 	addr    string
 	handler MessageHandler
 
+	// authTokens holds the set of accepted bearer tokens. When empty/nil, auth is
+	// disabled (local/dev). Stored atomically so tokens can be rotated at runtime
+	// without restarting the server or locking the request path.
+	authTokens atomic.Pointer[[]string]
+
 	mu      sync.Mutex
-	clients []*sseClient
+	clients map[string]*sseClient // keyed by session id
 }
 
 // NewSSETransport creates a new SSE transport listening on the given address (e.g., ":3000").
 func NewSSETransport(addr string) *SSETransport {
 	return &SSETransport{
-		addr: addr,
+		addr:    addr,
+		clients: make(map[string]*sseClient),
 	}
+}
+
+// SetAuthToken sets a single accepted bearer token (convenience for the common
+// case). An empty token leaves the endpoints open.
+func (s *SSETransport) SetAuthToken(token string) {
+	if token == "" {
+		s.SetAuthTokens(nil)
+		return
+	}
+	s.SetAuthTokens([]string{token})
+}
+
+// SetAuthTokens replaces the set of accepted bearer tokens atomically. Safe to
+// call at runtime to rotate credentials (add the new token, roll clients over,
+// then drop the old one) without restarting the server. Empty tokens are
+// ignored; an empty resulting set disables authentication.
+func (s *SSETransport) SetAuthTokens(tokens []string) {
+	cleaned := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		if tok != "" {
+			cleaned = append(cleaned, tok)
+		}
+	}
+	s.authTokens.Store(&cleaned)
+}
+
+// authorized reports whether the request carries an accepted bearer token.
+// Comparison is constant-time to avoid leaking tokens via timing.
+func (s *SSETransport) authorized(r *http.Request) bool {
+	tokensPtr := s.authTokens.Load()
+	if tokensPtr == nil || len(*tokensPtr) == 0 {
+		return true // auth disabled
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return false
+	}
+	got := []byte(strings.TrimPrefix(h, prefix))
+
+	ok := false
+	for _, tok := range *tokensPtr {
+		if subtle.ConstantTimeCompare(got, []byte(tok)) == 1 {
+			ok = true // keep scanning to avoid early-exit timing signal
+		}
+	}
+	return ok
 }
 
 // Start begins the HTTP server with /message and /sse endpoints.
@@ -79,19 +149,34 @@ func (s *SSETransport) Start(ctx context.Context, handler MessageHandler) error 
 	}
 }
 
-// Send broadcasts a JSON-RPC response to all connected SSE clients.
+// Send delivers a JSON-RPC message to connected SSE clients. If ctx carries a
+// client id (rpc.ClientID), the message is routed only to that session; if the
+// session is gone, the message is dropped. When no client id is present, the
+// message is broadcast to all connected clients (backward-compatible behavior).
 func (s *SSETransport) Send(ctx context.Context, msg *rpc.Response) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("sse transport: marshal response: %w", err)
 	}
 
+	targetID := rpc.ClientID(ctx)
+
 	s.mu.Lock()
-	clients := make([]*sseClient, len(s.clients))
-	copy(clients, s.clients)
+	var targets []*sseClient
+	if targetID != "" {
+		if c, ok := s.clients[targetID]; ok {
+			targets = append(targets, c)
+		}
+		// Unknown/disconnected session → nothing to deliver.
+	} else {
+		targets = make([]*sseClient, 0, len(s.clients))
+		for _, c := range s.clients {
+			targets = append(targets, c)
+		}
+	}
 	s.mu.Unlock()
 
-	for _, c := range clients {
+	for _, c := range targets {
 		select {
 		case c.events <- data:
 		case <-c.done:
@@ -107,6 +192,10 @@ func (s *SSETransport) Send(ctx context.Context, msg *rpc.Response) error {
 func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -128,7 +217,11 @@ func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := s.handler(r.Context(), req)
+	// Correlate this request with the caller's SSE session (if any) so that
+	// asynchronous notifications can be routed back to the originating client.
+	ctx := rpc.WithClientID(r.Context(), r.URL.Query().Get("sessionId"))
+
+	resp, err := s.handler(ctx, req)
 	if err != nil {
 		writeJSONError(w, req.ID, rpc.CodeInternalError, err.Error())
 		return
@@ -147,6 +240,10 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -163,12 +260,19 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	client := &sseClient{
+		id:     newSessionID(),
 		events: make(chan []byte, 64),
 		done:   make(chan struct{}),
 	}
 
 	s.addClient(client)
 	defer s.removeClient(client)
+
+	// Tell the client which endpoint to POST to, tagged with its session id.
+	// This mirrors the MCP HTTP+SSE "endpoint" event and lets the server route
+	// per-session notifications back to this connection.
+	fmt.Fprintf(w, "event: endpoint\ndata: /message?sessionId=%s\n\n", client.id)
+	flusher.Flush()
 
 	// Keep-alive ticker sends a comment event every 30 seconds.
 	ticker := time.NewTicker(30 * time.Second)
@@ -193,11 +297,11 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// addClient registers an SSE client for receiving broadcast events.
+// addClient registers an SSE client (by session id) for receiving events.
 func (s *SSETransport) addClient(c *sseClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.clients = append(s.clients, c)
+	s.clients[c.id] = c
 }
 
 // removeClient unregisters an SSE client and signals it as done.
@@ -205,12 +309,7 @@ func (s *SSETransport) removeClient(c *sseClient) {
 	close(c.done)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for i, client := range s.clients {
-		if client == c {
-			s.clients = append(s.clients[:i], s.clients[i+1:]...)
-			return
-		}
-	}
+	delete(s.clients, c.id)
 }
 
 // writeJSONError writes a JSON-RPC error response to the HTTP response writer.

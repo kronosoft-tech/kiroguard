@@ -228,7 +228,8 @@ func TestSSETransport_SSE_ReceivesBroadcast(t *testing.T) {
 	go func() {
 		for scanner.Scan() {
 			line := scanner.Text()
-			if strings.HasPrefix(line, "data: ") {
+			// Skip the initial endpoint event; we want the broadcast payload.
+			if strings.HasPrefix(line, "data: ") && !strings.Contains(line, "/message?sessionId=") {
 				dataCh <- strings.TrimPrefix(line, "data: ")
 				return
 			}
@@ -420,7 +421,8 @@ func TestSSETransport_Send_MultipleClients(t *testing.T) {
 		go func(s *bufio.Scanner) {
 			for s.Scan() {
 				line := s.Text()
-				if strings.HasPrefix(line, "data: ") {
+				// Skip the initial endpoint event; we want the broadcast payload.
+				if strings.HasPrefix(line, "data: ") && !strings.Contains(line, "/message?sessionId=") {
 					dataCh <- strings.TrimPrefix(line, "data: ")
 					return
 				}
@@ -453,4 +455,145 @@ func TestSSETransport_ImplementsInterface(t *testing.T) {
 	// Compile-time check that SSETransport implements Transport.
 	var _ Transport = (*SSETransport)(nil)
 	fmt.Println("SSETransport implements Transport interface")
+}
+
+// readEndpointSessionID scans an SSE stream for the initial endpoint event and
+// returns the sessionId query value from its data line.
+func readEndpointSessionID(t *testing.T, scanner *bufio.Scanner) string {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	found := make(chan string, 1)
+	go func() {
+		for scanner.Scan() {
+			line := scanner.Text()
+			const marker = "data: /message?sessionId="
+			if strings.HasPrefix(line, marker) {
+				found <- strings.TrimPrefix(line, marker)
+				return
+			}
+		}
+	}()
+	select {
+	case id := <-found:
+		return id
+	case <-deadline:
+		t.Fatal("timed out waiting for endpoint event")
+		return ""
+	}
+}
+
+func TestSSETransport_SSE_SendsEndpointEvent(t *testing.T) {
+	transport := NewSSETransport(":0")
+	transport.handler = echoHandler
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", transport.handleSSE)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("GET /sse failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	id := readEndpointSessionID(t, bufio.NewScanner(resp.Body))
+	if id == "" {
+		t.Fatal("expected a non-empty sessionId in endpoint event")
+	}
+}
+
+func TestSSETransport_Send_RoutesToSpecificSession(t *testing.T) {
+	transport := NewSSETransport(":0")
+	transport.handler = echoHandler
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", transport.handleSSE)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Connect two clients.
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	reqA, _ := http.NewRequestWithContext(ctxA, http.MethodGet, ts.URL+"/sse", nil)
+	respA, err := (&http.Client{}).Do(reqA)
+	if err != nil {
+		t.Fatalf("client A connect failed: %v", err)
+	}
+	defer respA.Body.Close()
+	scannerA := bufio.NewScanner(respA.Body)
+	idA := readEndpointSessionID(t, scannerA)
+
+	ctxB, cancelB := context.WithCancel(context.Background())
+	defer cancelB()
+	reqB, _ := http.NewRequestWithContext(ctxB, http.MethodGet, ts.URL+"/sse", nil)
+	respB, err := (&http.Client{}).Do(reqB)
+	if err != nil {
+		t.Fatalf("client B connect failed: %v", err)
+	}
+	defer respB.Body.Close()
+	scannerB := bufio.NewScanner(respB.Body)
+	idB := readEndpointSessionID(t, scannerB)
+
+	if idA == idB {
+		t.Fatalf("expected distinct session ids, both = %q", idA)
+	}
+
+	// Give registration a moment.
+	time.Sleep(100 * time.Millisecond)
+
+	// Send targeted at client A only.
+	id := json.RawMessage(`1`)
+	msg := rpc.NewResponse(&id, map[string]string{"target": "A"})
+	if err := transport.Send(rpc.WithClientID(context.Background(), idA), msg); err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	// Client A must receive the data event.
+	aData := make(chan string, 1)
+	go func() {
+		for scannerA.Scan() {
+			line := scannerA.Text()
+			if strings.HasPrefix(line, "data: ") {
+				aData <- strings.TrimPrefix(line, "data: ")
+				return
+			}
+		}
+	}()
+	select {
+	case data := <-aData:
+		var received rpc.Response
+		if err := json.Unmarshal([]byte(data), &received); err != nil {
+			t.Fatalf("client A unmarshal failed: %v", err)
+		}
+		var result map[string]string
+		json.Unmarshal(received.Result, &result)
+		if result["target"] != "A" {
+			t.Errorf("client A got target=%q, want A", result["target"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("client A did not receive the targeted message")
+	}
+
+	// Client B must NOT receive anything within a short window.
+	bData := make(chan string, 1)
+	go func() {
+		for scannerB.Scan() {
+			line := scannerB.Text()
+			if strings.HasPrefix(line, "data: ") {
+				bData <- strings.TrimPrefix(line, "data: ")
+				return
+			}
+		}
+	}()
+	select {
+	case data := <-bData:
+		t.Errorf("client B unexpectedly received a message: %s", data)
+	case <-time.After(600 * time.Millisecond):
+		// Expected: no message routed to B.
+	}
 }
