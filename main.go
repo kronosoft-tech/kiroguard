@@ -135,9 +135,10 @@ func main() {
 		t = sseT
 	}
 
-	// Wire the transport as the notifier for Clean-Arch so it can push
-	// asynchronous LLM enrichment to the client via JSON-RPC notifications.
+	// Wire the transport as the notifier for Clean-Arch and Vuln-Scanner so they
+	// can push asynchronous LLM enrichment to the client via JSON-RPC notifications.
 	archHandler.SetNotifier(t)
+	vulnHandler.SetNotifier(t)
 
 	// Create a MessageHandler that wraps the dispatcher's Dispatch method.
 	handler := func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
@@ -156,6 +157,9 @@ func main() {
 		slog.Warn("clean-arch enrichment drain incomplete", "error", derr)
 	}
 	drainCancel()
+
+	// Drain in-flight Vuln-Scanner enrichment goroutines as well.
+	vulnHandler.Shutdown()
 
 	if startErr != nil && ctx.Err() == nil {
 		slog.Error("transport error", "error", startErr)
