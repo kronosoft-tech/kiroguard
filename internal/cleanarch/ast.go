@@ -1,7 +1,24 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // Package cleanarch implements AI-powered architecture linting using AST analysis.
 package cleanarch
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -24,8 +41,17 @@ type ImportEdge struct {
 }
 
 // BuildImportGraph recursively parses all Go source files in the given directory
-// and builds a directed import graph.
+// and builds a directed import graph. It is equivalent to BuildImportGraphContext
+// with a background (non-cancellable) context.
 func BuildImportGraph(dir string) (ImportGraph, []ImportEdge, error) {
+	return BuildImportGraphContext(context.Background(), dir)
+}
+
+// BuildImportGraphContext is the context-aware variant of BuildImportGraph.
+// If ctx is cancelled or its deadline is exceeded during the directory walk,
+// the walk stops early and the graph/edges collected so far are returned with a
+// nil error (partial results). Callers can inspect ctx.Err() to detect truncation.
+func BuildImportGraphContext(ctx context.Context, dir string) (ImportGraph, []ImportEdge, error) {
 	graph := make(ImportGraph)
 	var edges []ImportEdge
 
@@ -37,6 +63,11 @@ func BuildImportGraph(dir string) (ImportGraph, []ImportEdge, error) {
 	err = filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
+		}
+
+		// Stop the walk if the context is done, keeping partial results.
+		if ctx.Err() != nil {
+			return filepath.SkipAll
 		}
 
 		// Skip vendor directories
