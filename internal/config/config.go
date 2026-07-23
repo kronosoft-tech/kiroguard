@@ -20,8 +20,10 @@ type Config struct {
 
 // TransportConfig configures the communication transport.
 type TransportConfig struct {
-	Type string `yaml:"type"` // "stdio" | "sse"
-	Port int    `yaml:"port"` // default: 3000
+	Type      string `yaml:"type"`       // "stdio" | "sse"
+	Port      int    `yaml:"port"`       // default: 3000
+	AuthToken  string   `yaml:"auth_token"`  // optional: single bearer token required on SSE endpoints (empty = open)
+	AuthTokens []string `yaml:"auth_tokens"` // optional: multiple accepted tokens (enables rotation); merged with auth_token
 }
 
 // LLMConfig configures the LLM backend.
@@ -45,7 +47,12 @@ type FinOpsConfig struct {
 
 // CleanArchConfig configures the Clean-Arch module.
 type CleanArchConfig struct {
-	RulesFile string `yaml:"rules_file"` // default: ".cleanarch.yaml"
+	RulesFile                string `yaml:"rules_file"`                   // default: ".cleanarch.yaml"
+	TimeoutMs                int    `yaml:"timeout_ms"`                   // AST scan deadline, default 3000
+	EnrichTimeoutMs          int    `yaml:"enrich_timeout_ms"`            // per-LLM-call deadline, default 1500
+	MaxConcurrent            int    `yaml:"max_concurrent"`               // GLOBAL max concurrent LLM calls, default 5
+	MaxEnrichmentsPerRequest int    `yaml:"max_enrichments_per_request"`  // per-request enrichment cap, default 25
+	MetricsIntervalMs        int    `yaml:"metrics_interval_ms"`          // periodic metrics report cadence, default 60000
 }
 
 // Load reads a YAML configuration file from the given path and returns a
