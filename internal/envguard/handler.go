@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/luiferdev/kiroguard/internal/logging"
 	"github.com/luiferdev/kiroguard/internal/rpc"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
@@ -20,6 +23,10 @@ type EnvGuardHandler struct {
 	migrator    *Migrator     // may be nil if AWS not configured
 	workerCount int           // max concurrent migration goroutines
 	limiter     *rate.Limiter // shared rate limiter for AWS API calls
+
+	// logger emits structured (CloudWatch-friendly) events, tagged module=env-guard.
+	// It NEVER logs secret values — only types, paths and line numbers (redaction).
+	logger *slog.Logger
 }
 
 // EnvGuardInput represents the input parameters for the envguard/scan tool.
@@ -44,6 +51,7 @@ func NewEnvGuardHandler(scanner *SecretScanner, ignore *IgnoreParser, migrator *
 		migrator:    migrator,
 		workerCount: workerCount,
 		limiter:     limiter,
+		logger:      logging.ModuleLogger("env-guard"),
 	}
 }
 
@@ -92,6 +100,10 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 		}, nil
 	}
 
+	start := time.Now()
+	// Nota de seguridad: solo registramos metadatos (ruta), nunca el diff ni el valor del secreto.
+	h.logger.Info("scan_started", "event", "scan_started", "file", input.FilePath)
+
 	// Step 1: Scan the diff for secrets
 	findings := h.scanner.Scan(input.Diff)
 
@@ -102,6 +114,11 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 
 	// Step 3: If no findings after filtering, return clean result
 	if len(findings) == 0 {
+		h.logger.Info("scan_completed",
+			"event", "scan_completed",
+			"blocked", false,
+			"secrets_found", 0,
+			"latency_ms", time.Since(start).Milliseconds())
 		return &EnvGuardOutput{
 			Blocked:  false,
 			Findings: []SecretFinding{},
@@ -125,6 +142,12 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 	if h.migrator == nil {
 		message += " (automatic migration unavailable - AWS not configured)"
 	}
+
+	h.logger.Warn("scan_completed",
+		"event", "scan_completed",
+		"blocked", true,
+		"secrets_found", len(findings),
+		"latency_ms", time.Since(start).Milliseconds())
 
 	return &EnvGuardOutput{
 		Blocked:  true,
