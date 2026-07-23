@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/luiferdev/kiroguard/internal/cleanarch"
 	"github.com/luiferdev/kiroguard/internal/config"
@@ -93,8 +94,16 @@ func main() {
 			defaultRules = rules
 		}
 	}
-	archHandler := cleanarch.NewCleanArchHandler(defaultRules)
+	archHandler := cleanarch.NewCleanArchHandler(defaultRules, llmBackend,
+		cleanarch.WithScanTimeout(time.Duration(cfg.CleanArch.TimeoutMs)*time.Millisecond),
+		cleanarch.WithEnrichTimeout(time.Duration(cfg.CleanArch.EnrichTimeoutMs)*time.Millisecond),
+		cleanarch.WithMaxConcurrent(cfg.CleanArch.MaxConcurrent),
+		cleanarch.WithMaxEnrichmentsPerRequest(cfg.CleanArch.MaxEnrichmentsPerRequest),
+	)
 	cleanarch.RegisterCleanArch(dispatcher, archHandler)
+
+	// Periodically export Clean-Arch metrics as structured logs (CloudWatch-native).
+	go archHandler.StartMetricsReporter(ctx, time.Duration(cfg.CleanArch.MetricsIntervalMs)*time.Millisecond)
 
 	// FinOps Guardrail: pre-deploy cost estimation.
 	detector := finops.NewPatternDetector()
@@ -109,8 +118,21 @@ func main() {
 		t = transport.NewStdioTransport(os.Stdin, os.Stdout)
 	case "sse":
 		addr := fmt.Sprintf(":%d", cfg.Transport.Port)
-		t = transport.NewSSETransport(addr)
+		sseT := transport.NewSSETransport(addr)
+		authTokens := cfg.Transport.AuthTokens
+		if cfg.Transport.AuthToken != "" {
+			authTokens = append(authTokens, cfg.Transport.AuthToken)
+		}
+		sseT.SetAuthTokens(authTokens)
+		if len(authTokens) == 0 {
+			slog.Warn("SSE transport running WITHOUT authentication; set transport.auth_token(s) or place it behind an authenticated gateway")
+		}
+		t = sseT
 	}
+
+	// Wire the transport as the notifier for Clean-Arch so it can push
+	// asynchronous LLM enrichment to the client via JSON-RPC notifications.
+	archHandler.SetNotifier(t)
 
 	// Create a MessageHandler that wraps the dispatcher's Dispatch method.
 	handler := func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
@@ -120,15 +142,21 @@ func main() {
 	slog.Info("starting KiroGuard", "transport", cfg.Transport.Type, "port", cfg.Transport.Port)
 
 	// Start the transport (blocks until context is cancelled or error).
-	if err := t.Start(ctx, handler); err != nil {
-		if ctx.Err() != nil {
-			// Graceful shutdown triggered by signal.
-			slog.Info("shutting down gracefully")
-			return
-		}
-		slog.Error("transport error", "error", err)
+	startErr := t.Start(ctx, handler)
+
+	// Drain in-flight Clean-Arch background enrichment before exiting so async
+	// LLM work isn't cut off mid-flight on shutdown.
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if derr := archHandler.Shutdown(drainCtx); derr != nil {
+		slog.Warn("clean-arch enrichment drain incomplete", "error", derr)
+	}
+	drainCancel()
+
+	if startErr != nil && ctx.Err() == nil {
+		slog.Error("transport error", "error", startErr)
 		os.Exit(1)
 	}
+	slog.Info("shutting down gracefully")
 }
 
 // setupLogging configures the global slog logger based on the format flag.
