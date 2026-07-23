@@ -80,7 +80,8 @@ func generateReplacement(finding SecretFinding) string {
 func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var input EnvGuardInput
 	if err := json.Unmarshal(params, &input); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		// Params malformados -> Invalid Params (-32602) via rpc.ValidationError.
+		return nil, fmt.Errorf("invalid params: %w", rpc.NewValidationError(err.Error()))
 	}
 
 	if input.Diff == "" {
