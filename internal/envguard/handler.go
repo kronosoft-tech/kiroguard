@@ -175,8 +175,19 @@ func (h *EnvGuardHandler) migrateAll(ctx context.Context, findings []SecretFindi
 			arn, err := h.migrator.Migrate(gCtx, findings[i])
 			if err != nil {
 				findings[i].MigrationErr = err.Error()
+				// Redaccion: registramos tipo/ruta/motivo, nunca el valor del secreto.
+				h.logger.Warn("migration_failed",
+					"event", "migration_failed",
+					"secret_type", findings[i].SecretType,
+					"file", findings[i].FilePath,
+					"error", err.Error())
 			} else {
 				findings[i].MigratedARN = arn
+				h.logger.Info("migration_succeeded",
+					"event", "migration_succeeded",
+					"secret_type", findings[i].SecretType,
+					"file", findings[i].FilePath,
+					"arn", arn)
 			}
 			return nil // never return error — independent error handling
 		})
