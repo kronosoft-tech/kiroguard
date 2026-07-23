@@ -83,6 +83,9 @@ func main() {
 	envHandler := envguard.NewEnvGuardHandler(scanner, ignoreParser, nil, cfg.EnvGuard.WorkerCount, limiter)
 	envguard.RegisterEnvGuard(dispatcher, envHandler)
 
+	// Exporta metricas de Env-Guard como logs estructurados (CloudWatch-native).
+	go envHandler.StartMetricsReporter(ctx, time.Duration(cfg.EnvGuard.MetricsIntervalMs)*time.Millisecond)
+
 	// Vuln-Scanner: dependency vulnerability scanning.
 	osvClient := vulnscanner.NewOSVClient()
 	vulnHandler := vulnscanner.NewVulnScannerHandler(osvClient, llmBackend)
