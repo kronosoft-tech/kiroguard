@@ -259,7 +259,8 @@ func TestHandle_AsyncEnrichmentNotifications(t *testing.T) {
 	handler.SetNotifier(notifier)
 
 	params, _ := json.Marshal(VulnScannerInput{Manifest: `{"dependencies": {"lodash": "4.17.0"}}`, Ecosystem: "npm"})
-	result, err := handler.Handle(context.Background(), params)
+	ctx := rpc.WithClientID(context.Background(), "sess-1")
+	result, err := handler.Handle(ctx, params)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -311,7 +312,8 @@ func TestHandle_AsyncNotificationErrorDropped(t *testing.T) {
 	handler.SetNotifier(notifier)
 
 	params, _ := json.Marshal(VulnScannerInput{Manifest: `{"dependencies": {"lodash": "4.17.0"}}`, Ecosystem: "npm"})
-	if _, err := handler.Handle(context.Background(), params); err != nil {
+	ctx := rpc.WithClientID(context.Background(), "sess-1")
+	if _, err := handler.Handle(ctx, params); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -319,6 +321,37 @@ func TestHandle_AsyncNotificationErrorDropped(t *testing.T) {
 
 	if notifier.count() != 0 {
 		t.Errorf("expected no notifications when LLM fails, got %d", notifier.count())
+	}
+}
+
+func TestHandle_NoSessionNoEnrichment(t *testing.T) {
+	server := newTestOSVServer(t, osvQueryBatchResponse{
+		Results: []osvQueryResult{
+			{Vulns: []OSVVulnerability{{ID: "CVE-2021-1", Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "9.0"}}}}},
+		},
+	})
+	defer server.Close()
+
+	mockLLM := &mockLLMBackend{response: &llm.LLMResponse{Text: "should not fire"}}
+	notifier := &mockNotifier{}
+	handler := NewVulnScannerHandler(NewOSVClientWithURL(server.URL), mockLLM)
+	handler.SetNotifier(notifier)
+
+	params, _ := json.Marshal(VulnScannerInput{Manifest: `{"dependencies": {"lodash": "4.17.0"}}`, Ecosystem: "npm"})
+	// No client/session id in the context → enrichment must be skipped to avoid
+	// broadcasting one caller's enrichment to unrelated clients.
+	result, err := handler.Handle(context.Background(), params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	output := result.(*VulnScannerOutput)
+	if output.RequestID != "" {
+		t.Errorf("expected empty request_id without a session, got %q", output.RequestID)
+	}
+
+	handler.waitBackground()
+	if notifier.count() != 0 {
+		t.Errorf("expected no notifications without a session, got %d", notifier.count())
 	}
 }
 

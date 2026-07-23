@@ -169,12 +169,15 @@ func (h *VulnScannerHandler) Handle(ctx context.Context, params json.RawMessage)
 	})
 	output.VulnCount = len(output.Findings)
 
-	// Kick off async enrichment for the top findings — only when both an LLM
-	// backend and a notifier are available (otherwise there is nowhere to deliver).
-	if h.llm != nil && h.notifier != nil && len(output.Findings) > 0 {
+	// Kick off async enrichment for the top findings — only when an LLM backend
+	// and a notifier are available AND the request carries a client session.
+	// Without a session id there is no delivery target, and emitting would
+	// broadcast one caller's enrichment to every connected client, so we skip it.
+	clientID := rpc.ClientID(ctx)
+	if h.llm != nil && h.notifier != nil && len(output.Findings) > 0 && clientID != "" {
 		requestID := newRequestID()
 		output.RequestID = requestID
-		h.startBackgroundEnrichment(rpc.ClientID(ctx), requestID, output.Findings)
+		h.startBackgroundEnrichment(clientID, requestID, output.Findings)
 	}
 
 	h.logger.Info("scan_completed",
@@ -188,6 +191,9 @@ func (h *VulnScannerHandler) Handle(ctx context.Context, params json.RawMessage)
 // background and returns immediately. Each completed enrichment is pushed to the
 // originating client as a JSON-RPC notification carrying the shared request_id.
 func (h *VulnScannerHandler) startBackgroundEnrichment(clientID, requestID string, findings []VulnFinding) {
+	if clientID == "" { // defense in depth: never enrich without a delivery target
+		return
+	}
 	n := h.maxPerRequest
 	if n > len(findings) {
 		n = len(findings)
