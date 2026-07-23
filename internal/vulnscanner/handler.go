@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/luiferdev/kiroguard/internal/llm"
@@ -27,7 +28,26 @@ const (
 	defaultMaxConcurrentEnrich = 5
 	// defaultMaxEnrichPerRequest caps how many findings a single request enriches.
 	defaultMaxEnrichPerRequest = 5
+	// defaultMetricsInterval is the fallback cadence for the periodic metrics report.
+	defaultMetricsInterval = 60 * time.Second
 )
+
+// Metrics holds atomic operational counters for Vuln-Scanner, suitable for
+// periodic export to CloudWatch. All fields are updated with atomic operations.
+type Metrics struct {
+	ScansTotal        atomic.Int64
+	VulnsFoundTotal   atomic.Int64
+	EnrichmentsOK     atomic.Int64
+	EnrichmentsFailed atomic.Int64
+}
+
+// MetricsSnapshot is an immutable point-in-time copy of the counters.
+type MetricsSnapshot struct {
+	ScansTotal        int64 `json:"scans_total"`
+	VulnsFoundTotal   int64 `json:"vulns_found_total"`
+	EnrichmentsOK     int64 `json:"enrichments_ok"`
+	EnrichmentsFailed int64 `json:"enrichments_failed"`
+}
 
 // VulnFinding represents a single vulnerability found during scanning.
 type VulnFinding struct {
@@ -83,7 +103,8 @@ type VulnScannerHandler struct {
 	baseCancel context.CancelFunc
 	inflight   sync.WaitGroup
 
-	logger *slog.Logger
+	metrics *Metrics
+	logger  *slog.Logger
 }
 
 // NewVulnScannerHandler creates a new VulnScannerHandler. llmBackend may be nil.
@@ -97,8 +118,50 @@ func NewVulnScannerHandler(osvClient *OSVClient, llmBackend llm.LLMBackend) *Vul
 		globalSem:     make(chan struct{}, defaultMaxConcurrentEnrich),
 		baseCtx:       baseCtx,
 		baseCancel:    cancel,
+		metrics:       &Metrics{},
 		logger:        logging.ModuleLogger("vuln-scanner"),
 	}
+}
+
+// MetricsSnapshot returns a point-in-time copy of the operational counters.
+func (h *VulnScannerHandler) MetricsSnapshot() MetricsSnapshot {
+	return MetricsSnapshot{
+		ScansTotal:        h.metrics.ScansTotal.Load(),
+		VulnsFoundTotal:   h.metrics.VulnsFoundTotal.Load(),
+		EnrichmentsOK:     h.metrics.EnrichmentsOK.Load(),
+		EnrichmentsFailed: h.metrics.EnrichmentsFailed.Load(),
+	}
+}
+
+// StartMetricsReporter periodically emits a structured "metrics_report" event
+// until ctx is cancelled, then emits one final report. Run it in its own
+// goroutine; CloudWatch metric filters can extract the counters from these logs.
+func (h *VulnScannerHandler) StartMetricsReporter(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = defaultMetricsInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			h.reportMetrics()
+			return
+		case <-ticker.C:
+			h.reportMetrics()
+		}
+	}
+}
+
+// reportMetrics logs a single point-in-time metrics snapshot.
+func (h *VulnScannerHandler) reportMetrics() {
+	m := h.MetricsSnapshot()
+	h.logger.Info("metrics_report",
+		"event", "metrics_report",
+		"scans_total", m.ScansTotal,
+		"vulns_found_total", m.VulnsFoundTotal,
+		"enrichments_ok", m.EnrichmentsOK,
+		"enrichments_failed", m.EnrichmentsFailed)
 }
 
 // SetNotifier wires the transport (or any rpc.Notifier) used to push asynchronous
@@ -137,6 +200,7 @@ func (h *VulnScannerHandler) Handle(ctx context.Context, params json.RawMessage)
 	}
 
 	start := time.Now()
+	h.metrics.ScansTotal.Add(1)
 	h.logger.Info("scan_started", "event", "scan_started", "ecosystem", input.Ecosystem)
 
 	// Parse manifest into dependencies.
@@ -168,6 +232,7 @@ func (h *VulnScannerHandler) Handle(ctx context.Context, params json.RawMessage)
 		return output.Findings[i].Severity > output.Findings[j].Severity
 	})
 	output.VulnCount = len(output.Findings)
+	h.metrics.VulnsFoundTotal.Add(int64(output.VulnCount))
 
 	// Kick off async enrichment for the top findings — only when an LLM backend
 	// and a notifier are available AND the request carries a client session.
@@ -221,11 +286,13 @@ func (h *VulnScannerHandler) startBackgroundEnrichment(clientID, requestID strin
 			resp, err := h.llm.Complete(callCtx, h.buildPrompt(f))
 			if err != nil || resp == nil || resp.Text == "" {
 				// Silently drop this finding's enrichment — the response already shipped.
+				h.metrics.EnrichmentsFailed.Add(1)
 				h.logger.Warn("enrichment_dropped",
 					"event", "enrichment_dropped", "cve_id", f.CVEID, "package", f.PackageName, "error", err)
 				return
 			}
 			h.emitEnrichment(baseCtx, requestID, idx, f, resp.Text)
+			h.metrics.EnrichmentsOK.Add(1)
 		}(i, findings[i])
 	}
 }
