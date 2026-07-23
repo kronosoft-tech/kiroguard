@@ -47,18 +47,19 @@ GitHub Actions (`.github/workflows/test.yml`): conflict check → `go build ./..
 
 `config.yaml` (optional) merges with defaults. Key fields: `transport.type`, `transport.port`, `llm.region`, `llm.model_id`, `envguard.ignore_file`, `cleanarch.rules_file`, `finops.default_requests_per_hour`.
 
-## EnvGuard Concurrency
+## EnvGuard (Concurrency & Production Hardening)
 
-- **Current state**: Zero concurrency — all operations synchronous, no goroutines/channels
-- **Independence**: Fully isolated from other modules; changes here never break vulnscanner/cleanarch/finops
-- **Scanner**: CPU-bound regex — keep sequential (microseconds per call, parallelization overhead not worth it)
-- **Migration**: Sequential 10s timeout per secret — N secrets = N × 10s worst case
-- **Recommendation**: Use `errgroup.Group` for concurrent migration (built-in error handling + context cancellation)
-- **Rate limiting**: Add `golang.org/x/time/rate` for AWS API calls to avoid throttling
-- **Worker count**: Make configurable via `EnvGuardConfig.WorkerCount`
-- **Race conditions**: Use index-based updates on findings slice, not append
-- **Context cancellation**: Handle graceful cleanup of in-flight migrations
-- **Testing**: Mock AWS clients via `NewMigratorWithClients()` — no real AWS calls in tests
+Implemented state (production-ready, on par with Clean-Arch):
+
+- **Scanner**: CPU-bound regex, kept sequential (parallelization overhead not worth it).
+- **Concurrent migration**: bounded worker pool via `errgroup.Group` + `SetLimit(WorkerCount)`; results written by index on the findings slice (no race).
+- **Rate limiting**: shared `golang.org/x/time/rate` limiter for AWS calls (`RateLimit`/`RateBurst`); each migration also has a 10s timeout.
+- **Config knobs**: `EnvGuardConfig.WorkerCount`, `RateLimit`, `RateBurst`, `MetricsIntervalMs` (validated in `config.validate`).
+- **Error contract**: malformed params return JSON-RPC `-32602` via `rpc.NewValidationError`.
+- **Observability**: structured events (`scan_started`, `scan_completed`, `migration_succeeded`, `migration_failed`) tagged `module=env-guard`. Secret values are NEVER logged (redaction) — only type, path, line, ARN, or error reason.
+- **Metrics**: atomic counters (`MetricsSnapshot()`) exported periodically as `metrics_report` logs via `StartMetricsReporter` (CloudWatch-native).
+- **Independence**: fully isolated from other modules; changes here never break vulnscanner/cleanarch/finops.
+- **Testing**: mock AWS clients via `NewMigratorWithClients()`; inject a buffer-backed `slog` logger to assert events and redaction — no real AWS calls in tests.
 
 ## Gotchas
 
@@ -67,4 +68,4 @@ GitHub Actions (`.github/workflows/test.yml`): conflict check → `go build ./..
 - CleanArch analysis is read-only — never modifies source files
 - FinOps heuristic explanations always include dollar amounts
 - Stdio transport reads newline-delimited JSON; empty lines are skipped
-- `go.mod` says `go 1.26.5` but CI uses Go 1.22 — keep compatibility in mind
+- `go.mod` requires `go 1.26.5`; CI (`.github/workflows/test.yml`) is pinned to the matching `1.26.5` toolchain
