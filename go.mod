@@ -9,6 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.43.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.72.0
 	gopkg.in/yaml.v3 v3.0.1
+	pgregory.net/rapid v1.3.0
 )
 
 require (
