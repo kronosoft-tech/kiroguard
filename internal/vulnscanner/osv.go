@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
 const (
 	defaultOSVBaseURL = "https://api.osv.dev"
 	osvBatchTimeout   = 30 * time.Second
+	// hydrateConcurrency bounds the concurrent /v1/vulns/{id} detail fetches so a
+	// vulnerable manifest with many CVEs does not open an unbounded fan-out.
+	hydrateConcurrency = 10
 )
 
 // OSVClient queries the OSV.dev vulnerability database.
@@ -165,5 +169,76 @@ func (c *OSVClient) QueryBatch(ctx context.Context, deps []Dependency) (map[stri
 		}
 	}
 
+	// The batch endpoint returns MINIMAL vulnerabilities (id + modified only).
+	// Hydrate each one with full detail (severity, ranges, fixed) via /v1/vulns/{id}.
+	c.hydrate(ctx, results)
+
 	return results, nil
+}
+
+// hydrate fills in full vulnerability detail for any minimal vuln (one that has
+// an ID but no severity and no affected ranges) by fetching /v1/vulns/{id}.
+// Fetches run concurrently, bounded by hydrateConcurrency, writing into distinct
+// slice elements (no shared-element races). A failed fetch leaves the minimal
+// vuln in place so the CVE id is still reported.
+func (c *OSVClient) hydrate(ctx context.Context, results map[string][]OSVVulnerability) {
+	type target struct {
+		pkg string
+		idx int
+		id  string
+	}
+	var targets []target
+	for pkg, vulns := range results {
+		for i := range vulns {
+			if vulns[i].ID != "" && len(vulns[i].Severity) == 0 && len(vulns[i].Affected) == 0 {
+				targets = append(targets, target{pkg: pkg, idx: i, id: vulns[i].ID})
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	sem := make(chan struct{}, hydrateConcurrency)
+	var wg sync.WaitGroup
+	for _, tg := range targets {
+		wg.Add(1)
+		go func(tg target) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			full, err := c.GetVuln(ctx, tg.id)
+			if err != nil || full == nil {
+				return // keep the minimal vuln; the id is still reported
+			}
+			results[tg.pkg][tg.idx] = *full
+		}(tg)
+	}
+	wg.Wait()
+}
+
+// GetVuln fetches full detail for a single vulnerability by id from /v1/vulns/{id}.
+func (c *OSVClient) GetVuln(ctx context.Context, id string) (*OSVVulnerability, error) {
+	url := c.baseURL + "/v1/vulns/" + id
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("osv: failed to create vuln request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("osv: vuln request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("osv: vuln API returned status %d", resp.StatusCode)
+	}
+
+	var v OSVVulnerability
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		return nil, fmt.Errorf("osv: failed to decode vuln: %w", err)
+	}
+	return &v, nil
 }
