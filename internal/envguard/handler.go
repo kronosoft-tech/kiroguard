@@ -52,6 +52,41 @@ type EnvGuardHandler struct {
 	metrics *Metrics
 }
 
+// defaultMetricsInterval is the fallback cadence for the periodic metrics report.
+const defaultMetricsInterval = 60 * time.Second
+
+// StartMetricsReporter periodically emits a structured "metrics_report" event
+// until ctx is cancelled, then emits one final report. Run it in its own
+// goroutine; CloudWatch metric filters can extract the counters from these logs.
+func (h *EnvGuardHandler) StartMetricsReporter(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = defaultMetricsInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			h.reportMetrics() // final flush on shutdown
+			return
+		case <-ticker.C:
+			h.reportMetrics()
+		}
+	}
+}
+
+// reportMetrics logs a single point-in-time metrics snapshot.
+func (h *EnvGuardHandler) reportMetrics() {
+	m := h.MetricsSnapshot()
+	h.logger.Info("metrics_report",
+		"event", "metrics_report",
+		"scans_total", m.ScansTotal,
+		"secrets_detected_total", m.SecretsDetectedTotal,
+		"blocked_total", m.BlockedTotal,
+		"migrations_ok", m.MigrationsOK,
+		"migrations_failed", m.MigrationsFailed)
+}
+
 // MetricsSnapshot returns a point-in-time copy of the operational counters.
 func (h *EnvGuardHandler) MetricsSnapshot() MetricsSnapshot {
 	return MetricsSnapshot{
