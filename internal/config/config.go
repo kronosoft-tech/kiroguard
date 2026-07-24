@@ -11,12 +11,13 @@ import (
 
 // Config is the top-level configuration for KiroGuard.
 type Config struct {
-	Transport TransportConfig `yaml:"transport"`
-	LLM       LLMConfig       `yaml:"llm"`
+	Transport   TransportConfig   `yaml:"transport"`
+	LLM         LLMConfig         `yaml:"llm"`
 	EnvGuard    EnvGuardConfig    `yaml:"envguard"`
 	FinOps      FinOpsConfig      `yaml:"finops"`
 	CleanArch   CleanArchConfig   `yaml:"cleanarch"`
 	VulnScanner VulnScannerConfig `yaml:"vulnscanner"`
+	IAMGuard    IAMGuardConfig    `yaml:"iamguard"`
 }
 
 // VulnScannerConfig configures the Vuln-Scanner module.
@@ -56,6 +57,15 @@ type EnvGuardConfig struct {
 // FinOpsConfig configures the FinOps Guardrail module.
 type FinOpsConfig struct {
 	DefaultRPH int `yaml:"default_requests_per_hour"` // default: 1000
+}
+
+// IAMGuardConfig configures the IAM-Guard module.
+type IAMGuardConfig struct {
+	EnrichTimeoutMs   int `yaml:"enrich_timeout_ms"`    // per-LLM-call deadline, default 5000
+	ScanTimeoutMs     int `yaml:"scan_timeout_ms"`      // AST + IaC scan deadline, default 10000
+	MaxFileSizeMb     int `yaml:"max_file_size_mb"`     // max IaC file size, default 5
+	MaxConcurrent     int `yaml:"max_concurrent"`        // GLOBAL max concurrent LLM calls, default 3
+	MetricsIntervalMs int `yaml:"metrics_interval_ms"`  // periodic metrics report cadence, default 60000
 }
 
 // CleanArchConfig configures the Clean-Arch module.
@@ -143,6 +153,26 @@ func validate(cfg *Config) error {
 	// envguard.rate_burst
 	if cfg.EnvGuard.RateBurst < 1 {
 		errs = append(errs, "envguard.rate_burst: must be greater than 0")
+	}
+
+	// iamguard.enrich_timeout_ms
+	if cfg.IAMGuard.EnrichTimeoutMs < 1 {
+		errs = append(errs, "iamguard.enrich_timeout_ms: must be greater than 0")
+	}
+
+	// iamguard.scan_timeout_ms
+	if cfg.IAMGuard.ScanTimeoutMs < 1 {
+		errs = append(errs, "iamguard.scan_timeout_ms: must be greater than 0")
+	}
+
+	// iamguard.max_file_size_mb
+	if cfg.IAMGuard.MaxFileSizeMb < 1 {
+		errs = append(errs, "iamguard.max_file_size_mb: must be greater than 0")
+	}
+
+	// iamguard.max_concurrent
+	if cfg.IAMGuard.MaxConcurrent < 1 {
+		errs = append(errs, "iamguard.max_concurrent: must be greater than 0")
 	}
 
 	if len(errs) > 0 {

@@ -38,5 +38,12 @@ func Default() *Config {
 			MaxPerRequest:     5,
 			MetricsIntervalMs: 60000,
 		},
+		IAMGuard: IAMGuardConfig{
+			EnrichTimeoutMs:   5000,
+			ScanTimeoutMs:     10000,
+			MaxFileSizeMb:     5,
+			MaxConcurrent:     3,
+			MetricsIntervalMs: 60000,
+		},
 	}
 }
