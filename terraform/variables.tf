@@ -73,3 +73,9 @@ variable "bedrock_model_arns" {
   type        = list(string)
   default     = ["arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-v3-sonnet"]
 }
+
+variable "alert_email" {
+  description = "Email address to receive DevSecOps security alerts via SNS"
+  type        = string
+  default     = "secops@example.com"
+}

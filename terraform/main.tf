@@ -473,6 +473,12 @@ resource "aws_sns_topic" "alerts" {
   tags = { Name = "${var.project_name}-alerts" }
 }
 
+resource "aws_sns_topic_subscription" "email_alerts" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
 resource "aws_cloudwatch_log_metric_filter" "secrets_detected" {
   name           = "${var.project_name}-secrets-detected-filter"
   pattern        = "{ $.event = \"migration_succeeded\" || $.event = \"secrets_detected\" }"
