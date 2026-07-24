@@ -1,4 +1,4 @@
-container_image  = "luiferdev/kiroguard:latest"
+container_image  = "casili/kiroguard:latest"
 fargate_cpu      = 512
 fargate_memory   = 1024
 desired_count    = 2

@@ -215,6 +215,7 @@ resource "aws_ecs_task_definition" "kiroguard" {
       name      = "kiroguard"
       image     = var.container_image
       essential = true
+      command   = ["-transport", "sse", "-port", "3000", "-log-format", "json"]
       portMappings = [
         {
           containerPort = 3000
