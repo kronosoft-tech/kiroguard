@@ -338,7 +338,7 @@ resource "aws_iam_role" "kiroguard_task" {
 
 resource "aws_iam_policy" "kiroguard_task" {
   name        = "${var.project_name}-task-policy"
-  description = "Policy for KiroGuard task role — Bedrock + Secrets Manager + SSM"
+  description = "Policy for KiroGuard task role — Bedrock + Secrets Manager + SSM + X-Ray"
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -359,6 +359,14 @@ resource "aws_iam_policy" "kiroguard_task" {
           "secretsmanager:PutSecretValue",
           "ssm:GetParameter",
           "ssm:PutParameter",
+        ]
+        Resource = ["*"]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
         ]
         Resource = ["*"]
       },
@@ -504,6 +512,30 @@ resource "aws_cloudwatch_metric_alarm" "secrets_detected_alarm" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
 }
 
+resource "aws_cloudwatch_log_metric_filter" "circuit_open" {
+  name           = "${var.project_name}-circuit-open-filter"
+  pattern        = "{ $.circuit_breaker = \"circuit_open\" || $.event = \"circuit_open\" }"
+  log_group_name = aws_cloudwatch_log_group.kiroguard.name
+
+  metric_transformation {
+    name      = "CircuitBreakerOpenCount"
+    namespace = "KiroGuard/Resilience"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_log_metric_filter" "cache_hits" {
+  name           = "${var.project_name}-cache-hits-filter"
+  pattern        = "{ $.cached = \"true\" || $.event = \"cache_hit\" }"
+  log_group_name = aws_cloudwatch_log_group.kiroguard.name
+
+  metric_transformation {
+    name      = "LLMCacheHitCount"
+    namespace = "KiroGuard/Performance"
+    value     = "1"
+  }
+}
+
 # ─── CloudWatch Real-Time Dashboard ──────────────────────────────────────────
 
 resource "aws_cloudwatch_dashboard" "kiroguard" {
@@ -549,7 +581,7 @@ resource "aws_cloudwatch_dashboard" "kiroguard" {
         type   = "metric"
         x      = 0
         y      = 6
-        width  = 24
+        width  = 12
         height = 6
         properties = {
           metrics = [
@@ -559,6 +591,23 @@ resource "aws_cloudwatch_dashboard" "kiroguard" {
           stat   = "Sum"
           region = var.aws_region
           title  = "Real-Time DevSecOps Security Detections"
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 6
+        width  = 12
+        height = 6
+        properties = {
+          metrics = [
+            ["KiroGuard/Performance", "LLMCacheHitCount"],
+            ["KiroGuard/Resilience", "CircuitBreakerOpenCount"]
+          ]
+          period = 60
+          stat   = "Sum"
+          region = var.aws_region
+          title  = "LLM LRU Cache Savings & Circuit Breaker Resiliency"
         }
       }
     ]
