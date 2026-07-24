@@ -45,5 +45,14 @@ func Default() *Config {
 			MaxConcurrent:     3,
 			MetricsIntervalMs: 60000,
 		},
+		PIIGuard: PIIGuardConfig{
+			SeverityThreshold: "low",
+			MaxFileSizeMb:     2,
+			EntropyThreshold:  4.5,
+			EnrichTimeoutMs:   5000,
+			ScanTimeoutMs:     15000,
+			MaxConcurrent:     3,
+			MetricsIntervalMs: 60000,
+		},
 	}
 }

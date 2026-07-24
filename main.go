@@ -17,6 +17,7 @@ import (
 	"github.com/luiferdev/kiroguard/internal/finops"
 	"github.com/luiferdev/kiroguard/internal/iamguard"
 	"github.com/luiferdev/kiroguard/internal/llm"
+	"github.com/luiferdev/kiroguard/internal/piiguard"
 	"github.com/luiferdev/kiroguard/internal/rpc"
 	"github.com/luiferdev/kiroguard/internal/transport"
 	"github.com/luiferdev/kiroguard/internal/vulnscanner"
@@ -136,6 +137,21 @@ func main() {
 	// Periodically export IAM-Guard metrics as structured logs (CloudWatch-native).
 	go iamHandler.StartMetricsReporter(ctx, time.Duration(cfg.IAMGuard.MetricsIntervalMs)*time.Millisecond)
 
+	// PII-Guard: privacy and compliance scanning.
+	piiHandler := piiguard.NewPIIGuardHandler(
+		piiguard.WithLLM(llmBackend),
+		piiguard.WithSeverityThreshold(cfg.PIIGuard.SeverityThreshold),
+		piiguard.WithMaxFileSizeMB(cfg.PIIGuard.MaxFileSizeMb),
+		piiguard.WithEntropyThreshold(cfg.PIIGuard.EntropyThreshold),
+		piiguard.WithScanTimeout(time.Duration(cfg.PIIGuard.ScanTimeoutMs)*time.Millisecond),
+		piiguard.WithEnrichTimeout(time.Duration(cfg.PIIGuard.EnrichTimeoutMs)*time.Millisecond),
+		piiguard.WithMaxConcurrent(cfg.PIIGuard.MaxConcurrent),
+	)
+	piiguard.RegisterPIIGuard(dispatcher, piiHandler)
+
+	// Periodically export PII-Guard metrics as structured logs (CloudWatch-native).
+	go piiHandler.StartMetricsReporter(ctx, time.Duration(cfg.PIIGuard.MetricsIntervalMs)*time.Millisecond)
+
 	// --- Create the transport ---
 	var t transport.Transport
 	switch cfg.Transport.Type {
@@ -160,6 +176,7 @@ func main() {
 	archHandler.SetNotifier(t)
 	vulnHandler.SetNotifier(t)
 	iamHandler.SetNotifier(t)
+	piiHandler.SetNotifier(t)
 
 	// Create a MessageHandler that wraps the dispatcher's Dispatch method.
 	handler := func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
@@ -185,6 +202,11 @@ func main() {
 	// Drain in-flight IAM-Guard background policy generation.
 	if derr := iamHandler.Shutdown(drainCtx); derr != nil {
 		slog.Warn("iam-guard policy generation drain incomplete", "error", derr)
+	}
+
+	// Drain in-flight PII-Guard LLM verification goroutines.
+	if derr := piiHandler.Shutdown(drainCtx); derr != nil {
+		slog.Warn("pii-guard verification drain incomplete", "error", derr)
 	}
 
 	if startErr != nil && ctx.Err() == nil {

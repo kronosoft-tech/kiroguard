@@ -18,6 +18,7 @@ type Config struct {
 	CleanArch   CleanArchConfig   `yaml:"cleanarch"`
 	VulnScanner VulnScannerConfig `yaml:"vulnscanner"`
 	IAMGuard    IAMGuardConfig    `yaml:"iamguard"`
+	PIIGuard    PIIGuardConfig    `yaml:"piiguard"`
 }
 
 // VulnScannerConfig configures the Vuln-Scanner module.
@@ -66,6 +67,17 @@ type IAMGuardConfig struct {
 	MaxFileSizeMb     int `yaml:"max_file_size_mb"`    // max IaC file size, default 5
 	MaxConcurrent     int `yaml:"max_concurrent"`      // GLOBAL max concurrent LLM calls, default 3
 	MetricsIntervalMs int `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
+}
+
+// PIIGuardConfig configures the PII-Guard module.
+type PIIGuardConfig struct {
+	SeverityThreshold string `yaml:"severity_threshold"` // default: "low"
+	MaxFileSizeMb     int    `yaml:"max_file_size_mb"`   // default: 2
+	EntropyThreshold  float64 `yaml:"entropy_threshold"` // Shannon cutoff, default: 4.5
+	EnrichTimeoutMs   int    `yaml:"enrich_timeout_ms"`  // per-LLM-call deadline, default 5000
+	ScanTimeoutMs     int    `yaml:"scan_timeout_ms"`    // scan deadline, default 15000
+	MaxConcurrent     int    `yaml:"max_concurrent"`     // max concurrent LLM calls, default 3
+	MetricsIntervalMs int    `yaml:"metrics_interval_ms"`// periodic metrics report cadence, default 60000
 }
 
 // CleanArchConfig configures the Clean-Arch module.
@@ -173,6 +185,35 @@ func validate(cfg *Config) error {
 	// iamguard.max_concurrent
 	if cfg.IAMGuard.MaxConcurrent < 1 {
 		errs = append(errs, "iamguard.max_concurrent: must be greater than 0")
+	}
+
+	// piiguard.severity_threshold
+	if cfg.PIIGuard.SeverityThreshold != "" {
+		switch cfg.PIIGuard.SeverityThreshold {
+		case "low", "medium", "high", "critical":
+		default:
+			errs = append(errs, "piiguard.severity_threshold: must be one of low, medium, high, critical")
+		}
+	}
+
+	// piiguard.scan_timeout_ms
+	if cfg.PIIGuard.ScanTimeoutMs < 1 {
+		errs = append(errs, "piiguard.scan_timeout_ms: must be greater than 0")
+	}
+
+	// piiguard.enrich_timeout_ms
+	if cfg.PIIGuard.EnrichTimeoutMs < 1 {
+		errs = append(errs, "piiguard.enrich_timeout_ms: must be greater than 0")
+	}
+
+	// piiguard.max_concurrent
+	if cfg.PIIGuard.MaxConcurrent < 1 {
+		errs = append(errs, "piiguard.max_concurrent: must be greater than 0")
+	}
+
+	// piiguard.max_file_size_mb
+	if cfg.PIIGuard.MaxFileSizeMb < 1 {
+		errs = append(errs, "piiguard.max_file_size_mb: must be greater than 0")
 	}
 
 	if len(errs) > 0 {
