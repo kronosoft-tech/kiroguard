@@ -53,19 +53,21 @@ go mod tidy
 
 ## Module Architecture
 
-Each capability lives in its own package under `internal/<module>/`, following a layered structure:
+Each capability lives in its own **flat** package under `internal/<module>/` (no sub-layer folders). Typical files per module:
 
 ```
 internal/<module>/
-  domain/         → entities, zero external imports (stdlib only)
-  application/    → use cases, imports domain only
-  infrastructure/ → adapters (AWS SDK, LLM, filesystem), imports domain + application
-  interfaces/     → MCP handler (entry point), imports application
+  <domain-logic>.go     → parsing/business logic (e.g. parser.go, ast.go, rules.go, scanner.go)
+  <external-client>.go  → adapters to external services (e.g. osv.go, migrator.go)
+  handler.go            → MCP handler: Input/Output structs, Handle(), RegisterX()
+  *_test.go             → hand-written tests, one file per source file
 ```
 
-**Enforced layer rules** (validated by the `cleanarch` module itself):
-- `domain/**` must NOT import `infrastructure/**` or `presentation/**`
-- `infrastructure/**` must NOT import `presentation/**`
+Layer boundary rules (validated by the `cleanarch` module itself) still apply **conceptually** — parsing/business logic must not directly call MCP/RPC types — but this is enforced by convention within a single file's responsibilities, not by physical subfolders.
+
+**Enforced layer rules**:
+- `**/domain/**` must NOT import `**/infrastructure/**` or `**/presentation/**`
+- `**/infrastructure/**` must NOT import `**/presentation/**`
 
 Modules are independent: `internal/cleanarch/` does not import `internal/envguard/`, `internal/vulnscanner/`, or `internal/finops/`, and vice versa. They only share `internal/llm/` (LLMBackend interface) and `internal/rpc/` (dispatcher).
 
