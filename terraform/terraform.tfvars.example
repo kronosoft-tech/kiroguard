@@ -1,0 +1,5 @@
+container_image  = "casili/kiroguard:latest"
+fargate_cpu      = 512
+fargate_memory   = 1024
+desired_count    = 2
+log_retention_days = 30

@@ -28,10 +28,19 @@ func NewStdioTransport(r io.Reader, w io.Writer) *StdioTransport {
 	}
 }
 
+// stdioSessionID is the implicit session id assigned to every stdio request.
+// stdio is single-client (one stdin/stdout pair), so a constant id lets modules
+// that gate async enrichment on rpc.ClientID work here too, with zero risk of
+// leaking one client's notifications to another (there is only one client).
+const stdioSessionID = "stdio"
+
 // Start reads newline-delimited JSON from the reader in a loop, parses each
 // line as a JSON-RPC 2.0 request, invokes the handler, and sends the response.
 // It returns nil on EOF or when the context is cancelled.
 func (t *StdioTransport) Start(ctx context.Context, handler MessageHandler) error {
+	// Tag the context with an implicit session id for the single stdio client.
+	ctx = rpc.WithClientID(ctx, stdioSessionID)
+
 	scanner := bufio.NewScanner(t.reader)
 
 	for scanner.Scan() {

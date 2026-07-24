@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -82,6 +83,83 @@ func TestHeuristicProvider_NoTemplatePrefix_Passthrough(t *testing.T) {
 	}
 	if resp.Text != input {
 		t.Errorf("expected passthrough, got %q, want %q", resp.Text, input)
+	}
+}
+
+func TestHeuristicProvider_CompleteStructured_AllFields(t *testing.T) {
+	provider := NewHeuristicProvider()
+	resp, err := provider.Complete(context.Background(), Prompt{
+		System: StructuredExplanationSystemPrompt,
+		User:   "Description=A rule violation\nFromPkg=infra\nImport=ui",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var se StructuredExplanation
+	if err := json.Unmarshal([]byte(resp.Text), &se); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if se.AIExplanation == "" {
+		t.Error("expected non-empty explanation")
+	}
+}
+
+func TestHeuristicProvider_CompleteStructured_NoDescription(t *testing.T) {
+	provider := NewHeuristicProvider()
+	resp, err := provider.Complete(context.Background(), Prompt{
+		System: StructuredExplanationSystemPrompt,
+		User:   "FromPkg=infra\nImport=ui",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var se StructuredExplanation
+	if err := json.Unmarshal([]byte(resp.Text), &se); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if se.AIExplanation == "" {
+		t.Error("expected non-empty explanation")
+	}
+}
+
+func TestHeuristicProvider_CompleteStructured_OnlyDescription(t *testing.T) {
+	provider := NewHeuristicProvider()
+	resp, err := provider.Complete(context.Background(), Prompt{
+		System: StructuredExplanationSystemPrompt,
+		User:   "Description=Something happened",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var se StructuredExplanation
+	if err := json.Unmarshal([]byte(resp.Text), &se); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if se.AIExplanation == "" {
+		t.Error("expected non-empty explanation")
+	}
+}
+
+func TestHeuristicProvider_ParseTemplateData_EmptyLines(t *testing.T) {
+	data := parseTemplateData("Key=Value\n\nOther=Thing\n")
+	if data["Key"] != "Value" {
+		t.Errorf("Key = %q, want %q", data["Key"], "Value")
+	}
+	if data["Other"] != "Thing" {
+		t.Errorf("Other = %q, want %q", data["Other"], "Thing")
+	}
+}
+
+func TestHeuristicProvider_ParseTemplateData_MalformedLine(t *testing.T) {
+	data := parseTemplateData("Key=Value\nNoEquals\nFoo=Bar")
+	if data["Key"] != "Value" {
+		t.Errorf("Key = %q, want %q", data["Key"], "Value")
+	}
+	if _, ok := data["NoEquals"]; ok {
+		t.Error("malformed line should not produce a map entry")
+	}
+	if data["Foo"] != "Bar" {
+		t.Errorf("Foo = %q, want %q", data["Foo"], "Bar")
 	}
 }
 

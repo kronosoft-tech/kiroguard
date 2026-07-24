@@ -4,18 +4,98 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
+	"sync/atomic"
+	"time"
 
+	"github.com/luiferdev/kiroguard/internal/logging"
 	"github.com/luiferdev/kiroguard/internal/rpc"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/time/rate"
 )
+
+// Metrics holds atomic operational counters for Env-Guard, suitable for periodic
+// export to CloudWatch. All fields are updated with atomic operations.
+type Metrics struct {
+	ScansTotal           atomic.Int64
+	SecretsDetectedTotal atomic.Int64
+	BlockedTotal         atomic.Int64
+	MigrationsOK         atomic.Int64
+	MigrationsFailed     atomic.Int64
+}
+
+// MetricsSnapshot is an immutable point-in-time copy of the counters.
+type MetricsSnapshot struct {
+	ScansTotal           int64 `json:"scans_total"`
+	SecretsDetectedTotal int64 `json:"secrets_detected_total"`
+	BlockedTotal         int64 `json:"blocked_total"`
+	MigrationsOK         int64 `json:"migrations_ok"`
+	MigrationsFailed     int64 `json:"migrations_failed"`
+}
 
 // EnvGuardHandler wires together the secret scanner, ignore filter, and migrator
 // to provide the complete Env-Guard MCP tool.
 type EnvGuardHandler struct {
-	scanner  *SecretScanner
-	ignore   *IgnoreParser // may be nil if no ignore file
-	migrator *Migrator     // may be nil if AWS not configured
+	scanner     *SecretScanner
+	ignore      *IgnoreParser // may be nil if no ignore file
+	migrator    *Migrator     // may be nil if AWS not configured
+	workerCount int           // max concurrent migration goroutines
+	limiter     *rate.Limiter // shared rate limiter for AWS API calls
+
+	// logger emits structured (CloudWatch-friendly) events, tagged module=env-guard.
+	// It NEVER logs secret values — only types, paths and line numbers (redaction).
+	logger *slog.Logger
+
+	// metrics holds atomic operational counters.
+	metrics *Metrics
+}
+
+// defaultMetricsInterval is the fallback cadence for the periodic metrics report.
+const defaultMetricsInterval = 60 * time.Second
+
+// StartMetricsReporter periodically emits a structured "metrics_report" event
+// until ctx is cancelled, then emits one final report. Run it in its own
+// goroutine; CloudWatch metric filters can extract the counters from these logs.
+func (h *EnvGuardHandler) StartMetricsReporter(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = defaultMetricsInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			h.reportMetrics() // final flush on shutdown
+			return
+		case <-ticker.C:
+			h.reportMetrics()
+		}
+	}
+}
+
+// reportMetrics logs a single point-in-time metrics snapshot.
+func (h *EnvGuardHandler) reportMetrics() {
+	m := h.MetricsSnapshot()
+	h.logger.Info("metrics_report",
+		"event", "metrics_report",
+		"scans_total", m.ScansTotal,
+		"secrets_detected_total", m.SecretsDetectedTotal,
+		"blocked_total", m.BlockedTotal,
+		"migrations_ok", m.MigrationsOK,
+		"migrations_failed", m.MigrationsFailed)
+}
+
+// MetricsSnapshot returns a point-in-time copy of the operational counters.
+func (h *EnvGuardHandler) MetricsSnapshot() MetricsSnapshot {
+	return MetricsSnapshot{
+		ScansTotal:           h.metrics.ScansTotal.Load(),
+		SecretsDetectedTotal: h.metrics.SecretsDetectedTotal.Load(),
+		BlockedTotal:         h.metrics.BlockedTotal.Load(),
+		MigrationsOK:         h.metrics.MigrationsOK.Load(),
+		MigrationsFailed:     h.metrics.MigrationsFailed.Load(),
+	}
 }
 
 // EnvGuardInput represents the input parameters for the envguard/scan tool.
@@ -33,11 +113,15 @@ type EnvGuardOutput struct {
 
 // NewEnvGuardHandler creates a new EnvGuardHandler with the given components.
 // ignore and migrator may be nil if not available.
-func NewEnvGuardHandler(scanner *SecretScanner, ignore *IgnoreParser, migrator *Migrator) *EnvGuardHandler {
+func NewEnvGuardHandler(scanner *SecretScanner, ignore *IgnoreParser, migrator *Migrator, workerCount int, limiter *rate.Limiter) *EnvGuardHandler {
 	return &EnvGuardHandler{
-		scanner:  scanner,
-		ignore:   ignore,
-		migrator: migrator,
+		scanner:     scanner,
+		ignore:      ignore,
+		migrator:    migrator,
+		workerCount: workerCount,
+		limiter:     limiter,
+		logger:      logging.ModuleLogger("env-guard"),
+		metrics:     &Metrics{},
 	}
 }
 
@@ -74,7 +158,8 @@ func generateReplacement(finding SecretFinding) string {
 func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (interface{}, error) {
 	var input EnvGuardInput
 	if err := json.Unmarshal(params, &input); err != nil {
-		return nil, fmt.Errorf("invalid params: %w", err)
+		// Params malformados -> Invalid Params (-32602) via rpc.ValidationError.
+		return nil, fmt.Errorf("invalid params: %w", rpc.NewValidationError(err.Error()))
 	}
 
 	if input.Diff == "" {
@@ -84,6 +169,11 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 			Message:  "No diff provided",
 		}, nil
 	}
+
+	start := time.Now()
+	h.metrics.ScansTotal.Add(1)
+	// Nota de seguridad: solo registramos metadatos (ruta), nunca el diff ni el valor del secreto.
+	h.logger.Info("scan_started", "event", "scan_started", "file", input.FilePath)
 
 	// Step 1: Scan the diff for secrets
 	findings := h.scanner.Scan(input.Diff)
@@ -95,6 +185,11 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 
 	// Step 3: If no findings after filtering, return clean result
 	if len(findings) == 0 {
+		h.logger.Info("scan_completed",
+			"event", "scan_completed",
+			"blocked", false,
+			"secrets_found", 0,
+			"latency_ms", time.Since(start).Milliseconds())
 		return &EnvGuardOutput{
 			Blocked:  false,
 			Findings: []SecretFinding{},
@@ -102,35 +197,80 @@ func (h *EnvGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 		}, nil
 	}
 
-	// Step 4: Process findings - migrate and generate replacements
+	// Findings that survived the ignore filter are the ones we actually block on.
+	h.metrics.SecretsDetectedTotal.Add(int64(len(findings)))
+	h.metrics.BlockedTotal.Add(1)
+
+	// Step 4: Migrate findings concurrently (if migrator available)
+	if h.migrator != nil {
+		h.migrateAll(ctx, findings)
+	}
+
+	// Step 5: Generate replacements and clear secret values (sequential, post-migration)
 	for i := range findings {
-		if h.migrator != nil {
-			arn, err := h.migrator.Migrate(ctx, findings[i])
-			if err != nil {
-				findings[i].MigrationErr = err.Error()
-			} else {
-				findings[i].MigratedARN = arn
-			}
-		}
-
-		// Generate replacement snippet (does not contain original secret)
 		findings[i].Replacement = generateReplacement(findings[i])
-
-		// Clear the secret value from the output to avoid leaking it
 		findings[i].SecretValue = ""
 	}
 
-	// Step 5: Build message
+	// Step 6: Build message
 	message := fmt.Sprintf("Blocked: %d secret(s) detected", len(findings))
 	if h.migrator == nil {
 		message += " (automatic migration unavailable - AWS not configured)"
 	}
+
+	h.logger.Warn("scan_completed",
+		"event", "scan_completed",
+		"blocked", true,
+		"secrets_found", len(findings),
+		"latency_ms", time.Since(start).Milliseconds())
 
 	return &EnvGuardOutput{
 		Blocked:  true,
 		Findings: findings,
 		Message:  message,
 	}, nil
+}
+
+// migrateAll executes all migrations concurrently using a bounded worker pool.
+// Each finding is processed independently; errors are recorded per-finding.
+// The method blocks until all goroutines complete.
+func (h *EnvGuardHandler) migrateAll(ctx context.Context, findings []SecretFinding) {
+	g, gCtx := errgroup.WithContext(ctx)
+	g.SetLimit(h.workerCount)
+
+	for i := range findings {
+		i := i // capture loop variable
+		g.Go(func() error {
+			// Rate limit before calling AWS
+			if err := h.limiter.Wait(gCtx); err != nil {
+				findings[i].MigrationErr = err.Error()
+				return nil // don't cancel others
+			}
+
+			arn, err := h.migrator.Migrate(gCtx, findings[i])
+			if err != nil {
+				findings[i].MigrationErr = err.Error()
+				h.metrics.MigrationsFailed.Add(1)
+				// Redaccion: registramos tipo/ruta/motivo, nunca el valor del secreto.
+				h.logger.Warn("migration_failed",
+					"event", "migration_failed",
+					"secret_type", findings[i].SecretType,
+					"file", findings[i].FilePath,
+					"error", err.Error())
+			} else {
+				findings[i].MigratedARN = arn
+				h.metrics.MigrationsOK.Add(1)
+				h.logger.Info("migration_succeeded",
+					"event", "migration_succeeded",
+					"secret_type", findings[i].SecretType,
+					"file", findings[i].FilePath,
+					"arn", arn)
+			}
+			return nil // never return error — independent error handling
+		})
+	}
+
+	g.Wait()
 }
 
 // RegisterEnvGuard registers the envguard/scan tool handler with the RPC dispatcher.

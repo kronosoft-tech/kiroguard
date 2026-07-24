@@ -77,6 +77,15 @@ func TestNewIgnoreParser_PureRegexPattern(t *testing.T) {
 	}
 }
 
+func TestNewIgnoreParser_InvalidGlobReturnsError(t *testing.T) {
+	// An unclosed bracket glob is recognized as glob but produces invalid regex
+	content := "[invalid"
+	_, err := NewIgnoreParser(content)
+	if err == nil {
+		t.Fatal("expected error for invalid glob, got nil")
+	}
+}
+
 func TestNewIgnoreParser_InvalidRegexReturnsError(t *testing.T) {
 	// An unclosed group is invalid regex but doesn't contain *, ?, or [
 	content := "(unclosed"

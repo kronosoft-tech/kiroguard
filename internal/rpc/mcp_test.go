@@ -108,10 +108,10 @@ func TestHandleToolsList(t *testing.T) {
 
 	// Verify the expected tool names
 	expectedNames := map[string]bool{
-		"envguard/scan":    true,
-		"vulnscanner/scan": true,
+		"envguard/scan":     true,
+		"vulnscanner/scan":  true,
 		"cleanarch/analyze": true,
-		"finops/analyze":   true,
+		"finops/analyze":    true,
 	}
 
 	for _, tool := range result.Tools {

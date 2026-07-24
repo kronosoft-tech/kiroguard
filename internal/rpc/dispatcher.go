@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 )
@@ -59,6 +60,12 @@ func (d *Dispatcher) dispatchSafe(ctx context.Context, req *Request) (resp *Resp
 
 	result, err := handler(ctx, req.Params)
 	if err != nil {
+		// Parameter validation failures map to Invalid Params (-32602);
+		// everything else is an Internal Error (-32603).
+		var ve *ValidationError
+		if errors.As(err, &ve) {
+			return ErrInvalidParams(req.ID, err.Error())
+		}
 		return ErrInternalError(req.ID, err.Error())
 	}
 

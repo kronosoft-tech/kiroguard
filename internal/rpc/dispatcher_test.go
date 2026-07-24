@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 )
@@ -194,5 +195,91 @@ func TestDispatch_NilID(t *testing.T) {
 	}
 	if resp.ID != nil {
 		t.Error("expected nil ID in response for notification")
+	}
+}
+
+func TestDispatch_ValidationErrorMapsToInvalidParams(t *testing.T) {
+	d := NewDispatcher()
+	d.Register("validate", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return nil, NewValidationError("directory_path is required")
+	})
+
+	id := json.RawMessage(`5`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "validate",
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != CodeInvalidParams {
+		t.Errorf("expected code %d (Invalid Params), got %d", CodeInvalidParams, resp.Error.Code)
+	}
+	if resp.Error.Message == "" {
+		t.Error("expected non-empty error message")
+	}
+}
+
+func TestDispatch_WrappedValidationErrorMapsToInvalidParams(t *testing.T) {
+	d := NewDispatcher()
+	d.Register("validate", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		// A validation error wrapped with fmt.Errorf must still be detected via errors.As.
+		return nil, fmt.Errorf("invalid params: %w", NewValidationError("bad field"))
+	})
+
+	id := json.RawMessage(`6`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "validate",
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != CodeInvalidParams {
+		t.Errorf("expected code %d (Invalid Params), got %d", CodeInvalidParams, resp.Error.Code)
+	}
+}
+
+func TestDispatch_NonValidationErrorStaysInternal(t *testing.T) {
+	d := NewDispatcher()
+	d.Register("boom", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return nil, errors.New("disk on fire")
+	})
+
+	id := json.RawMessage(`7`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "boom",
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error == nil {
+		t.Fatal("expected error response")
+	}
+	if resp.Error.Code != CodeInternalError {
+		t.Errorf("expected code %d (Internal Error) for a non-validation error, got %d", CodeInternalError, resp.Error.Code)
+	}
+}
+
+func TestValidationError_ErrorAndUnwrap(t *testing.T) {
+	base := NewValidationError("directory_path is required")
+	if base.Error() != "directory_path is required" {
+		t.Errorf("Error() = %q, want %q", base.Error(), "directory_path is required")
+	}
+
+	wrapped := fmt.Errorf("context: %w", base)
+	var ve *ValidationError
+	if !errors.As(wrapped, &ve) {
+		t.Fatal("expected errors.As to detect wrapped *ValidationError")
+	}
+	if ve.Error() != "directory_path is required" {
+		t.Errorf("unwrapped Error() = %q, want %q", ve.Error(), "directory_path is required")
 	}
 }

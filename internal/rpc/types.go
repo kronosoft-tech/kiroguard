@@ -12,11 +12,17 @@ type Request struct {
 }
 
 // Response represents a JSON-RPC 2.0 response object.
+//
+// It also doubles as the envelope for server-initiated notifications: when
+// Method (and optionally Params) is set and ID is nil, it serializes as a valid
+// JSON-RPC notification (no id, no result/error). Use NewNotification to build one.
 type Response struct {
 	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
 	Result  json.RawMessage  `json:"result,omitempty"`
 	Error   *RPCError        `json:"error,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
 }
 
 // RPCError represents a JSON-RPC 2.0 error object.

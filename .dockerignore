@@ -1,0 +1,10 @@
+.git
+.gitignore
+*.md
+*.yaml
+*.yml
+!docker-compose.yml
+*.log
+testdata/
+**/*_test.go
+**/test_*

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -49,7 +50,7 @@ func TestLoad_EmptyPath_ReturnsDefaults(t *testing.T) {
 	}
 
 	want := Default()
-	if *cfg != *want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Errorf("Load(\"\") returned different config than Default()")
 	}
 }
@@ -257,6 +258,142 @@ llm:
 	}
 	if !strings.Contains(errMsg, "llm.provider") {
 		t.Errorf("error should mention llm.provider, got: %q", errMsg)
+	}
+}
+
+func TestLoad_InvalidEnvGuardWorkerCount(t *testing.T) {
+	content := `
+envguard:
+  worker_count: 0
+`
+	path := writeTestFile(t, "bad_worker_count.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid envguard.worker_count")
+	}
+	if !strings.Contains(err.Error(), "envguard.worker_count") {
+		t.Errorf("error = %q, want it to contain field name 'envguard.worker_count'", err.Error())
+	}
+}
+
+func TestLoad_InvalidEnvGuardRateLimit(t *testing.T) {
+	content := `
+envguard:
+  rate_limit: 0
+`
+	path := writeTestFile(t, "bad_rate_limit.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid envguard.rate_limit")
+	}
+	if !strings.Contains(err.Error(), "envguard.rate_limit") {
+		t.Errorf("error = %q, want it to contain field name 'envguard.rate_limit'", err.Error())
+	}
+}
+
+func TestLoad_InvalidEnvGuardRateBurst(t *testing.T) {
+	content := `
+envguard:
+  rate_burst: 0
+`
+	path := writeTestFile(t, "bad_rate_burst.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid envguard.rate_burst")
+	}
+	if !strings.Contains(err.Error(), "envguard.rate_burst") {
+		t.Errorf("error = %q, want it to contain field name 'envguard.rate_burst'", err.Error())
+	}
+}
+
+func TestLoad_ValidEnvGuardConcurrencySettings(t *testing.T) {
+	content := `
+envguard:
+  worker_count: 5
+  rate_limit: 10.0
+  rate_burst: 5
+`
+	path := writeTestFile(t, "valid_concurrency.yaml", content)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%q) returned error: %v", path, err)
+	}
+	if cfg.EnvGuard.WorkerCount != 5 {
+		t.Errorf("EnvGuard.WorkerCount = %d, want %d", cfg.EnvGuard.WorkerCount, 5)
+	}
+	if cfg.EnvGuard.RateLimit != 10.0 {
+		t.Errorf("EnvGuard.RateLimit = %f, want %f", cfg.EnvGuard.RateLimit, 10.0)
+	}
+	if cfg.EnvGuard.RateBurst != 5 {
+		t.Errorf("EnvGuard.RateBurst = %d, want %d", cfg.EnvGuard.RateBurst, 5)
+	}
+}
+
+func TestLoad_InvalidIAMGuardEnrichTimeout(t *testing.T) {
+	content := `
+iamguard:
+  enrich_timeout_ms: 0
+`
+	path := writeTestFile(t, "bad_iam_enrich.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.enrich_timeout_ms")
+	}
+	if !strings.Contains(err.Error(), "iamguard.enrich_timeout_ms") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.enrich_timeout_ms'", err.Error())
+	}
+}
+
+func TestLoad_InvalidIAMGuardScanTimeout(t *testing.T) {
+	content := `
+iamguard:
+  scan_timeout_ms: 0
+`
+	path := writeTestFile(t, "bad_iam_scan.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.scan_timeout_ms")
+	}
+	if !strings.Contains(err.Error(), "iamguard.scan_timeout_ms") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.scan_timeout_ms'", err.Error())
+	}
+}
+
+func TestLoad_InvalidIAMGuardMaxFileSize(t *testing.T) {
+	content := `
+iamguard:
+  max_file_size_mb: 0
+`
+	path := writeTestFile(t, "bad_iam_filesize.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.max_file_size_mb")
+	}
+	if !strings.Contains(err.Error(), "iamguard.max_file_size_mb") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.max_file_size_mb'", err.Error())
+	}
+}
+
+func TestLoad_InvalidIAMGuardMaxConcurrent(t *testing.T) {
+	content := `
+iamguard:
+  max_concurrent: 0
+`
+	path := writeTestFile(t, "bad_iam_concurrent.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.max_concurrent")
+	}
+	if !strings.Contains(err.Error(), "iamguard.max_concurrent") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.max_concurrent'", err.Error())
 	}
 }
 

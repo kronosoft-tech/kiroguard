@@ -2,6 +2,26 @@ package rpc
 
 import "encoding/json"
 
+// ValidationError marks an error as a client-side parameter validation failure.
+// Handlers should return (or wrap) a ValidationError when the request params are
+// malformed or fail validation, so the dispatcher can map it to the JSON-RPC
+// "Invalid Params" code (-32602) instead of a generic Internal Error (-32603).
+//
+// It supports errors.As, including when wrapped via fmt.Errorf("...: %w", err).
+type ValidationError struct {
+	Message string
+}
+
+// NewValidationError creates a ValidationError with the given message.
+func NewValidationError(message string) *ValidationError {
+	return &ValidationError{Message: message}
+}
+
+// Error implements the error interface.
+func (e *ValidationError) Error() string {
+	return e.Message
+}
+
 // Standard JSON-RPC 2.0 error codes.
 const (
 	// CodeParseError indicates invalid JSON was received by the server.

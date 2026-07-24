@@ -73,6 +73,13 @@ Built in **Go** for speed and reliability, KiroGuard runs as a single binary and
 - Monthly cost estimation with documented formulas based on AWS public pricing
 - Concrete dollar amounts (e.g., "$73/month at 1000 req/hr")
 
+### 🛂 IAM-Guard (Least-Privilege IAM Analysis)
+- AST-based detection of AWS SDK calls in Go source code (ec2, s3, lambda, iam, dynamodb, sqs, sns, etc.)
+- IaC wildcard scanning for `Action: "*"` and `Resource: "*"` in Terraform, YAML, JSON, TypeScript
+- Least-privilege IAM policy generation via AWS Bedrock LLM (async, non-blocking)
+- Request IDs for correlating async policy generation with scan results
+- Files up to 5MB (configurable) with automatic skip of vendor/node_modules/.git
+
 ---
 
 ## Architecture
@@ -94,10 +101,10 @@ Built in **Go** for speed and reliability, KiroGuard runs as a single binary and
 │                           │                                      │
 │  ┌────────────┬───────────┼────────────┬──────────────┐        │
 │  ▼            ▼           ▼            ▼              ▼        │
-│ ┌────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐   │
-│ │ Env-   │ │ Vuln   │ │ Clean    │ │ FinOps   │ │   LLM   │   │
-│ │ Guard  │ │Scanner │ │  Arch    │ │ Guardrail│ │ Backend │   │
-│ └────────┘ └────────┘ └──────────┘ └──────────┘ └─────────┘   │
+│ ┌────────┐ ┌────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌─────────┐ │
+│ │ Env-   │ │ Vuln   │ │ Clean    │ │ FinOps   │ │   IAM   │ │   LLM   │ │
+│ │ Guard  │ │Scanner │ │  Arch    │ │ Guardrail│ │  Guard  │ │ Backend │ │
+│ └────────┘ └────────┘ └──────────┘ └──────────┘ └─────────┘ └─────────┘ │
 │                                                                 │
 │  AWS Services (optional)                                        │
 │  ┌──────────────┬───────────────┬─────────────────┐            │
@@ -171,6 +178,12 @@ cleanarch:
 
 finops:
   default-rph: 1000  # Default requests per hour
+
+iamguard:
+  enrich-timeout-ms: 5000  # Per-LLM-call deadline
+  scan-timeout-ms: 10000   # AST + IaC scan deadline
+  max-file-size-mb: 5      # Max IaC file size
+  max-concurrent: 3        # Concurrent LLM calls
 ```
 
 ### CLI Flags
@@ -194,6 +207,7 @@ Once running, KiroGuard exposes these tools via JSON-RPC 2.0:
 | `vulnscanner/scan` | Check dependencies for known CVEs |
 | `cleanarch/analyze` | Analyze code architecture violations |
 | `finops/analyze` | Estimate cloud cost impact |
+| `iamguard/analyze` | Analyze AWS SDK usage and generate least-privilege IAM policies |
 
 ---
 
