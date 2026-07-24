@@ -4,3 +4,15 @@
 # Binarios locales
 kiroguard
 /tmp/
+
+# Variables de entorno y secretos
+.env
+.env.*
+!.env.example
+
+# Terraform state y credenciales locales
+*.tfstate
+*.tfstate.backup
+.terraform/
+terraform/terraform.tfvars
+terraform/.terraform/
