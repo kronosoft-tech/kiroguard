@@ -41,6 +41,7 @@ type OSVClient struct {
 type OSVVulnerability struct {
 	ID       string        `json:"id"`
 	Summary  string        `json:"summary"`
+	Details  string        `json:"details,omitempty"`
 	Severity []OSVSeverity `json:"severity,omitempty"`
 	Affected []OSVAffected `json:"affected,omitempty"`
 }

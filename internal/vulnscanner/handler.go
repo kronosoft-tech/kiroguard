@@ -56,6 +56,8 @@ type VulnFinding struct {
 	Severity      float64 `json:"severity_score"`
 	AffectedRange string  `json:"affected_range"`
 	FixedVersion  string  `json:"fixed_version"`
+	Summary       string  `json:"summary,omitempty"`
+	Details       string  `json:"details,omitempty"`
 	Explanation   string  `json:"explanation,omitempty"`
 }
 
@@ -354,16 +356,34 @@ func (h *VulnScannerHandler) emitEnrichment(ctx context.Context, requestID strin
 	}
 }
 
-// buildPrompt constructs the LLM prompt for a finding. To keep Bedrock usage
-// ultra-efficient, it includes ONLY the CVE id, package, severity, affected range
-// and fixed version — never raw OSV JSON.
+// maxPromptDescription bounds the summary+details text sent to the LLM so each
+// call stays token-efficient (whole prompt <= ~500 chars). Raw OSV arrays
+// (affected versions/ranges, database_specific) are NEVER included.
+const maxPromptDescription = 300
+
+// buildPrompt constructs the LLM prompt for a finding. Per directive #4 it feeds
+// the model the human-readable OSV `summary`/`details` (truncated) plus the CVE
+// id and package — never the massive raw OSV JSON arrays.
 func (h *VulnScannerHandler) buildPrompt(f VulnFinding) llm.Prompt {
+	desc := f.Summary
+	if f.Details != "" {
+		if desc != "" {
+			desc += " — "
+		}
+		desc += f.Details
+	}
+	if len(desc) > maxPromptDescription {
+		desc = desc[:maxPromptDescription] + "..."
+	}
+
+	user := fmt.Sprintf("CVE: %s\nPackage: %s", f.CVEID, f.PackageName)
+	if desc != "" {
+		user += "\n" + desc
+	}
+
 	return llm.Prompt{
 		System: "You are a security expert. Provide a brief, actionable explanation of the vulnerability in under 2 sentences.",
-		User: fmt.Sprintf(
-			"CVE: %s\nPackage: %s\nSeverity: %.1f\nAffected range: %s\nFixed in: %s",
-			f.CVEID, f.PackageName, f.Severity, f.AffectedRange, f.FixedVersion,
-		),
+		User:   user,
 	}
 }
 
@@ -383,6 +403,8 @@ func mapOSVToFinding(pkgName string, vuln OSVVulnerability) VulnFinding {
 		PackageName: pkgName,
 		CVEID:       vuln.ID,
 		Severity:    parseSeverityScore(vuln.Severity),
+		Summary:     vuln.Summary,
+		Details:     vuln.Details,
 	}
 	for _, affected := range vuln.Affected {
 		for _, r := range affected.Ranges {

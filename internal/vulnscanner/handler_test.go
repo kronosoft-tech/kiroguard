@@ -376,6 +376,8 @@ func TestRegisterVulnScanner(t *testing.T) {
 func TestMapOSVToFinding_MultipleRanges(t *testing.T) {
 	vuln := OSVVulnerability{
 		ID:       "CVE-2023-0001",
+		Summary:  "Prototype pollution",
+		Details:  "An attacker can pollute Object.prototype",
 		Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "7.5"}},
 		Affected: []OSVAffected{
 			{
@@ -390,6 +392,38 @@ func TestMapOSVToFinding_MultipleRanges(t *testing.T) {
 	}
 	if finding.AffectedRange != ">=2.0.0, <2.5.1" || finding.FixedVersion != "2.5.1" {
 		t.Errorf("unexpected range/fixed: %q / %q", finding.AffectedRange, finding.FixedVersion)
+	}
+	if finding.Summary != "Prototype pollution" {
+		t.Errorf("Summary = %q, want %q", finding.Summary, "Prototype pollution")
+	}
+	if finding.Details != "An attacker can pollute Object.prototype" {
+		t.Errorf("Details = %q", finding.Details)
+	}
+}
+
+func TestBuildPrompt_UsesSummaryDetailsAndTruncates(t *testing.T) {
+	h := NewVulnScannerHandler(NewOSVClient(), nil)
+	f := VulnFinding{
+		CVEID:         "CVE-2021-12345",
+		PackageName:   "lodash",
+		Severity:      9.8,
+		AffectedRange: ">=0, <4.17.21",
+		Summary:       "Prototype pollution in lodash",
+		Details:       strings.Repeat("x", 1000), // very long details must be truncated
+	}
+	p := h.buildPrompt(f)
+
+	// Must include the human-readable summary (directive #4).
+	if !strings.Contains(p.User, "Prototype pollution in lodash") {
+		t.Errorf("prompt should include the summary; got: %q", p.User)
+	}
+	// Token efficiency: system+user must stay small (<= 500 chars per design §4.1).
+	if total := len(p.System) + len(p.User); total > 500 {
+		t.Errorf("prompt too long: %d chars (want <= 500)", total)
+	}
+	// The 1000-char details must be truncated, not dumped verbatim.
+	if strings.Contains(p.User, strings.Repeat("x", 500)) {
+		t.Error("details were not truncated")
 	}
 }
 
