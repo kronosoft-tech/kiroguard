@@ -36,6 +36,18 @@ func TestParseStructuredExplanation_Invalid(t *testing.T) {
 	}
 }
 
+func TestParseStructuredExplanation_InvalidJSONInsideBraces(t *testing.T) {
+	if _, err := ParseStructuredExplanation(`{"ai_explanation": broken}`); err == nil {
+		t.Fatal("expected error for invalid JSON inside braces")
+	}
+}
+
+func TestExtractJSON_NoBraces(t *testing.T) {
+	if s := extractJSON("plain text without braces"); s != "" {
+		t.Errorf("expected empty, got %q", s)
+	}
+}
+
 func TestHeuristicProvider_StructuredOutput(t *testing.T) {
 	provider := NewHeuristicProvider()
 

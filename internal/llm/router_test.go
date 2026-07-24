@@ -219,6 +219,95 @@ func TestLLMRouter_RetriesTransientPrimaryErrors(t *testing.T) {
 	}
 }
 
+func TestLLMRouter_ZeroMaxAttemptsDefaultsToOne(t *testing.T) {
+	primary := &flakyBackend{failuresBeforeSuccess: 0}
+	fallback := &mockBackend{response: &LLMResponse{Text: "fb", Metadata: map[string]string{}}}
+
+	router := NewLLMRouter(primary, fallback)
+	router.maxAttempts = 0
+	router.baseBackoff = time.Millisecond
+
+	resp, err := router.Complete(context.Background(), Prompt{User: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Text != "recovered" {
+		t.Errorf("got %q, want %q", resp.Text, "recovered")
+	}
+}
+
+func TestLLMRouter_BaseBackoffZeroUsesDefault(t *testing.T) {
+	primary := &flakyBackend{failuresBeforeSuccess: 1}
+	fallback := &mockBackend{response: &LLMResponse{Text: "fb", Metadata: map[string]string{}}}
+
+	router := NewLLMRouter(primary, fallback)
+	router.baseBackoff = 0
+	router.maxAttempts = 2
+
+	resp, err := router.Complete(context.Background(), Prompt{User: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Text != "recovered" {
+		t.Errorf("got %q, want %q", resp.Text, "recovered")
+	}
+}
+
+func TestLLMRouter_ContextCancelledDuringBackoff(t *testing.T) {
+	primary := &flakyBackend{failuresBeforeSuccess: 100}
+	fallback := &mockBackend{response: &LLMResponse{Text: "fb", Metadata: map[string]string{}}}
+
+	router := NewLLMRouter(primary, fallback)
+	router.baseBackoff = 10 * time.Second
+	router.maxAttempts = 2
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	resp, err := router.Complete(ctx, Prompt{User: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Text != "fb" {
+		t.Errorf("got %q, want %q (should fallback)", resp.Text, "fb")
+	}
+}
+
+func TestLLMRouter_PrimaryTimeoutIsTerminal(t *testing.T) {
+	callCount := 0
+	primary := &callCountBackend{
+		errFn: func() error {
+			callCount++
+			return context.DeadlineExceeded
+		},
+	}
+	fallback := &mockBackend{response: &LLMResponse{Text: "fb", Metadata: map[string]string{}}}
+
+	router := NewLLMRouter(primary, fallback)
+	router.baseBackoff = time.Millisecond
+	router.maxAttempts = 3
+
+	resp, err := router.Complete(context.Background(), Prompt{User: "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Text != "fb" {
+		t.Errorf("got %q, want %q", resp.Text, "fb")
+	}
+	if callCount != 1 {
+		t.Errorf("primary called %d times, want 1 (timeout should be terminal)", callCount)
+	}
+}
+
+// callCountBackend returns a dynamic error on each call, counting calls.
+type callCountBackend struct {
+	errFn func() error
+}
+
+func (c *callCountBackend) Complete(_ context.Context, _ Prompt) (*LLMResponse, error) {
+	return nil, c.errFn()
+}
+
 func TestLLMRouter_ExhaustsRetriesThenFallback(t *testing.T) {
 	primary := &flakyBackend{failuresBeforeSuccess: 100} // always fails within attempts
 	fallback := &mockBackend{response: &LLMResponse{Text: "fb", Metadata: map[string]string{}}}
