@@ -60,15 +60,19 @@ func main() {
 	// --- Initialize the LLM layer ---
 	// Heuristic provider is always available as fallback.
 	heuristic := llm.NewHeuristicProvider()
-	var llmBackend llm.LLMBackend = heuristic
+	var rawBackend llm.LLMBackend = heuristic
 
 	// Try to create the Bedrock provider (non-fatal if it fails).
 	bedrockProvider, err := llm.NewBedrockProvider(ctx, cfg.LLM.Region, cfg.LLM.ModelID)
 	if err == nil {
-		llmBackend = llm.NewLLMRouter(bedrockProvider, heuristic)
+		rawBackend = llm.NewLLMRouter(bedrockProvider, heuristic)
 	} else {
 		slog.Warn("Bedrock unavailable, using heuristic fallback", "error", err)
 	}
+
+	// Wrap with thread-safe O(1) LRU Cache (capacity: 1000 prompts) to prevent duplicate token costs and API latency.
+	cachedLLM := llm.NewCachedLLM(rawBackend, 1000)
+	var llmBackend llm.LLMBackend = cachedLLM
 
 	// --- Create the dispatcher and register MCP protocol handlers ---
 	dispatcher := rpc.NewDispatcher()
