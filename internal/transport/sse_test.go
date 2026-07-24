@@ -451,6 +451,106 @@ func TestSSETransport_Send_MultipleClients(t *testing.T) {
 	}
 }
 
+func TestSSETransport_Send_DisconnectedClient_DropsMessage(t *testing.T) {
+	transport := NewSSETransport(":0")
+	transport.handler = echoHandler
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", transport.handleSSE)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("GET /sse failed: %v", err)
+	}
+
+	// Read endpoint event and get session ID
+	scanner := bufio.NewScanner(resp.Body)
+	sessionID := readEndpointSessionID(t, scanner)
+
+	// Close response body and cancel context to disconnect the client
+	resp.Body.Close()
+	cancel()
+	time.Sleep(50 * time.Millisecond) // let the disconnect propagate
+
+	// Send targeted at the now-disconnected session — must not block
+	id := json.RawMessage(`1`)
+	msg := rpc.NewResponse(&id, map[string]string{"status": "dropped"})
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel2()
+	if err := transport.Send(rpc.WithClientID(ctx2, sessionID), msg); err != nil {
+		t.Fatalf("Send to disconnected client failed: %v", err)
+	}
+}
+
+func TestSSETransport_SetAuthToken_EmptyDisablesAuth(t *testing.T) {
+	tr := NewSSETransport(":0")
+	tr.handler = echoHandler
+	tr.SetAuthToken("") // should clear tokens
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/message", tr.handleMessage)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	// Must be accessible without token
+	body := `{"jsonrpc":"2.0","id":1,"method":"test.echo","params":{}}`
+	resp, err := http.Post(ts.URL+"/message", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 after SetAuthToken('')", resp.StatusCode)
+	}
+}
+
+func TestSSETransport_Start_ListenError(t *testing.T) {
+	tr := NewSSETransport(":-1") // invalid port
+
+	err := tr.Start(context.Background(), echoHandler)
+	if err == nil {
+		t.Fatal("expected listen error, got nil")
+	}
+	if !strings.Contains(err.Error(), "listen") {
+		t.Errorf("expected listen error, got: %v", err)
+	}
+}
+
+func TestSSETransport_PostMessage_HandlerError(t *testing.T) {
+	tr := NewSSETransport(":0")
+	errorHandler := func(_ context.Context, req *rpc.Request) (*rpc.Response, error) {
+		return nil, fmt.Errorf("handler failed: something went wrong")
+	}
+	tr.handler = errorHandler
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/message", tr.handleMessage)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body := `{"jsonrpc":"2.0","id":7,"method":"test.fail","params":{}}`
+	resp, err := http.Post(ts.URL+"/message", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var rpcResp rpc.Response
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if rpcResp.Error == nil {
+		t.Fatal("expected error response when handler fails")
+	}
+	if rpcResp.Error.Code != rpc.CodeInternalError {
+		t.Errorf("expected code %d, got %d", rpc.CodeInternalError, rpcResp.Error.Code)
+	}
+}
+
 func TestSSETransport_ImplementsInterface(t *testing.T) {
 	// Compile-time check that SSETransport implements Transport.
 	var _ Transport = (*SSETransport)(nil)

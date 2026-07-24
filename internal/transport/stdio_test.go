@@ -228,6 +228,69 @@ func TestStdioTransport_Send(t *testing.T) {
 	}
 }
 
+type errReader struct{ err error }
+
+func (r *errReader) Read(p []byte) (int, error) { return 0, r.err }
+
+type errWriter struct {
+	written bytes.Buffer
+	failAt  int // bytes written before failure
+}
+
+func (w *errWriter) Write(p []byte) (int, error) {
+	remaining := w.failAt - w.written.Len()
+	if remaining <= 0 {
+		return 0, io.ErrClosedPipe
+	}
+	if len(p) > remaining {
+		p = p[:remaining]
+	}
+	return w.written.Write(p)
+}
+
+func TestStdioTransport_ScannerError(t *testing.T) {
+	reader := &errReader{err: io.ErrUnexpectedEOF}
+	var output bytes.Buffer
+	tr := NewStdioTransport(reader, &output)
+
+	err := tr.Start(context.Background(), func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
+		t.Fatal("handler should not be called on scanner error")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected scanner error, got nil")
+	}
+}
+
+func TestStdioTransport_SendError_Propagated(t *testing.T) {
+	// Use a writer that fails immediately.
+	writer := &errWriter{failAt: 0}
+	input := `{"jsonrpc":"2.0","id":1,"method":"test","params":{}}` + "\n"
+	tr := NewStdioTransport(strings.NewReader(input), writer)
+
+	err := tr.Start(context.Background(), func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
+		return rpc.NewResponse(req.ID, "ok"), nil
+	})
+	if err == nil {
+		t.Fatal("expected send error, got nil")
+	}
+}
+
+func TestStdioTransport_ParseError_SendFailure(t *testing.T) {
+	// When parse fails AND send also fails, Start returns the send error.
+	writer := &errWriter{failAt: 0}
+	input := `not-json` + "\n"
+	tr := NewStdioTransport(strings.NewReader(input), writer)
+
+	err := tr.Start(context.Background(), func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
+		t.Fatal("handler should not be called on parse error")
+		return nil, nil
+	})
+	if err == nil {
+		t.Fatal("expected error from send failure after parse error, got nil")
+	}
+}
+
 func TestStdioTransport_HandlerError(t *testing.T) {
 	input := `{"jsonrpc":"2.0","id":1,"method":"fail"}` + "\n"
 	reader := strings.NewReader(input)
