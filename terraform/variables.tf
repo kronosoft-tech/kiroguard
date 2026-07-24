@@ -39,11 +39,6 @@ variable "container_image" {
   type        = string
 }
 
-variable "certificate_arn" {
-  description = "ARN of the ACM certificate for the ALB HTTPS listener"
-  type        = string
-}
-
 variable "fargate_cpu" {
   description = "Fargate task CPU units"
   type        = number
