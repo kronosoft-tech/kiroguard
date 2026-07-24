@@ -333,6 +333,70 @@ envguard:
 	}
 }
 
+func TestLoad_InvalidIAMGuardEnrichTimeout(t *testing.T) {
+	content := `
+iamguard:
+  enrich_timeout_ms: 0
+`
+	path := writeTestFile(t, "bad_iam_enrich.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.enrich_timeout_ms")
+	}
+	if !strings.Contains(err.Error(), "iamguard.enrich_timeout_ms") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.enrich_timeout_ms'", err.Error())
+	}
+}
+
+func TestLoad_InvalidIAMGuardScanTimeout(t *testing.T) {
+	content := `
+iamguard:
+  scan_timeout_ms: 0
+`
+	path := writeTestFile(t, "bad_iam_scan.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.scan_timeout_ms")
+	}
+	if !strings.Contains(err.Error(), "iamguard.scan_timeout_ms") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.scan_timeout_ms'", err.Error())
+	}
+}
+
+func TestLoad_InvalidIAMGuardMaxFileSize(t *testing.T) {
+	content := `
+iamguard:
+  max_file_size_mb: 0
+`
+	path := writeTestFile(t, "bad_iam_filesize.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.max_file_size_mb")
+	}
+	if !strings.Contains(err.Error(), "iamguard.max_file_size_mb") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.max_file_size_mb'", err.Error())
+	}
+}
+
+func TestLoad_InvalidIAMGuardMaxConcurrent(t *testing.T) {
+	content := `
+iamguard:
+  max_concurrent: 0
+`
+	path := writeTestFile(t, "bad_iam_concurrent.yaml", content)
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("expected validation error for invalid iamguard.max_concurrent")
+	}
+	if !strings.Contains(err.Error(), "iamguard.max_concurrent") {
+		t.Errorf("error = %q, want it to contain field name 'iamguard.max_concurrent'", err.Error())
+	}
+}
+
 func TestLoad_InvalidYAML(t *testing.T) {
 	content := `{{{invalid yaml`
 	path := writeTestFile(t, "invalid.yaml", content)
