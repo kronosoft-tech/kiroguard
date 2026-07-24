@@ -788,6 +788,56 @@ func TestMigrateAll_OrderPreserved(t *testing.T) {
 	}
 }
 
+func TestMigrateAll_RateLimiterError_AllFail(t *testing.T) {
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			return &secretsmanager.CreateSecretOutput{
+				ARN: aws.String("arn:aws:secretsmanager:us-east-1:123:secret:should-never-reach"),
+			}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(
+		MigratorConfig{Target: "secrets_manager", Region: "us-east-1"},
+		smClient,
+		nil,
+	)
+
+	// rate=0 and burst=0 means the limiter never gives out tokens.
+	handler := NewEnvGuardHandler(NewSecretScanner(), nil, migrator, 5, rate.NewLimiter(0, 0))
+
+	diff := `--- a/config.go
++++ b/config.go
+@@ -1,2 +1,4 @@
+ package config
++const key1 = "AKIAIOSFODNN7EXAMPL1"
++const key2 = "AKIAIOSFODNN7EXAMPL2"
+ var x = 1
+`
+
+	params := makeParams(t, EnvGuardInput{Diff: diff})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so limiter.Wait returns error
+
+	result, err := handler.Handle(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	output := result.(*EnvGuardOutput)
+	if len(output.Findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(output.Findings))
+	}
+
+	// Both should have a MigrationErr due to rate limiter context cancellation
+	for i, f := range output.Findings {
+		if f.MigrationErr == "" {
+			t.Errorf("finding[%d]: expected migration error from rate limiter, got empty", i)
+		}
+	}
+}
+
 func TestMigrateAll_SingleWorker(t *testing.T) {
 	// WorkerCount=1 means sequential execution. 3 findings × 50ms = >= 150ms total.
 	delay := 50 * time.Millisecond

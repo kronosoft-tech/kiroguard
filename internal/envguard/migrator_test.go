@@ -32,6 +32,17 @@ func (m *mockSSMClient) PutParameter(ctx context.Context, params *ssm.PutParamet
 
 // --- Tests ---
 
+func TestNewMigrator_UnsupportedTarget(t *testing.T) {
+	ctx := context.Background()
+	_, err := NewMigrator(ctx, MigratorConfig{Target: "invalid_target", Region: "us-east-1"})
+	if err == nil {
+		t.Fatal("expected error for unsupported migration target, got nil")
+	}
+	if !contains(err.Error(), "unsupported migration target") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 func TestMigrate_SecretsManager_Success(t *testing.T) {
 	expectedARN := "arn:aws:secretsmanager:us-east-1:123456789012:secret:kiroguard-src-main-go-aws-key-AbCdEf"
 
@@ -273,6 +284,114 @@ func TestMigrate_SSM_Error_Propagated(t *testing.T) {
 	}
 	if !contains(err.Error(), "ParameterAlreadyExists") {
 		t.Errorf("expected error to contain 'ParameterAlreadyExists', got: %v", err)
+	}
+}
+
+func TestMigrate_UnsupportedTarget(t *testing.T) {
+	migrator := NewMigratorWithClients(MigratorConfig{Target: "unsupported"}, nil, nil)
+
+	secret := SecretFinding{
+		LineNumber:  1,
+		FilePath:    "main.go",
+		SecretType:  "aws_key",
+		SecretValue: "AKIAIOSFODNN7EXAMPLE",
+	}
+
+	_, err := migrator.Migrate(context.Background(), secret)
+	if err == nil {
+		t.Fatal("expected error for unsupported target, got nil")
+	}
+	if !contains(err.Error(), `unsupported migration target: "unsupported"`) {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMigrate_SecretsManager_NilARN(t *testing.T) {
+	smClient := &mockSMClient{
+		createSecretFn: func(ctx context.Context, params *secretsmanager.CreateSecretInput, optFns ...func(*secretsmanager.Options)) (*secretsmanager.CreateSecretOutput, error) {
+			return &secretsmanager.CreateSecretOutput{ARN: nil}, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(MigratorConfig{Target: "secrets_manager"}, smClient, nil)
+
+	secret := SecretFinding{
+		LineNumber:  1,
+		FilePath:    "main.go",
+		SecretType:  "aws_key",
+		SecretValue: "secret123",
+	}
+
+	_, err := migrator.Migrate(context.Background(), secret)
+	if err == nil {
+		t.Fatal("expected error for nil ARN, got nil")
+	}
+	if !contains(err.Error(), "nil ARN") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMigrate_SSM_NilOutput(t *testing.T) {
+	ssmClient := &mockSSMClient{
+		putParameterFn: func(ctx context.Context, params *ssm.PutParameterInput, optFns ...func(*ssm.Options)) (*ssm.PutParameterOutput, error) {
+			return nil, nil
+		},
+	}
+
+	migrator := NewMigratorWithClients(MigratorConfig{Target: "ssm", SSMPrefix: "/test/"}, nil, ssmClient)
+
+	secret := SecretFinding{
+		LineNumber:  1,
+		FilePath:    "main.go",
+		SecretType:  "aws_key",
+		SecretValue: "secret123",
+	}
+
+	_, err := migrator.Migrate(context.Background(), secret)
+	if err == nil {
+		t.Fatal("expected error for nil SSM output, got nil")
+	}
+	if !contains(err.Error(), "nil output") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMigrate_SMClientNotInitialized(t *testing.T) {
+	// migrator with target "secrets_manager" but nil smClient
+	migrator := NewMigratorWithClients(MigratorConfig{Target: "secrets_manager"}, nil, &mockSSMClient{})
+
+	secret := SecretFinding{
+		LineNumber:  1,
+		FilePath:    "main.go",
+		SecretType:  "aws_key",
+		SecretValue: "secret123",
+	}
+
+	_, err := migrator.Migrate(context.Background(), secret)
+	if err == nil {
+		t.Fatal("expected error for nil SM client, got nil")
+	}
+	if !contains(err.Error(), "not initialized") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestMigrate_SSMClientNotInitialized(t *testing.T) {
+	migrator := NewMigratorWithClients(MigratorConfig{Target: "ssm", SSMPrefix: "/test/"}, &mockSMClient{}, nil)
+
+	secret := SecretFinding{
+		LineNumber:  1,
+		FilePath:    "main.go",
+		SecretType:  "aws_key",
+		SecretValue: "secret123",
+	}
+
+	_, err := migrator.Migrate(context.Background(), secret)
+	if err == nil {
+		t.Fatal("expected error for nil SSM client, got nil")
+	}
+	if !contains(err.Error(), "not initialized") {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
