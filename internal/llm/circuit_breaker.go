@@ -129,11 +129,12 @@ func (cb *CircuitBreakerLLM) onSuccess() {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
 
-	if cb.state == StateHalfOpen {
+	switch cb.state {
+	case StateHalfOpen:
 		cb.state = StateClosed
 		cb.failures = 0
 		cb.lastStateChange = time.Now()
-	} else if cb.state == StateClosed {
+	case StateClosed:
 		cb.failures = 0
 	}
 	cb.successes++
@@ -147,10 +148,13 @@ func (cb *CircuitBreakerLLM) onFailure() {
 	cb.failures++
 	cb.successes = 0
 
-	if cb.state == StateClosed && cb.failures >= cb.threshold {
-		cb.state = StateOpen
-		cb.lastStateChange = time.Now()
-	} else if cb.state == StateHalfOpen {
+	switch cb.state {
+	case StateClosed:
+		if cb.failures >= cb.threshold {
+			cb.state = StateOpen
+			cb.lastStateChange = time.Now()
+		}
+	case StateHalfOpen:
 		cb.state = StateOpen
 		cb.lastStateChange = time.Now()
 	}
