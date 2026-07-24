@@ -88,8 +88,15 @@ func main() {
 
 	// Vuln-Scanner: dependency vulnerability scanning.
 	osvClient := vulnscanner.NewOSVClient()
-	vulnHandler := vulnscanner.NewVulnScannerHandler(osvClient, llmBackend)
+	vulnHandler := vulnscanner.NewVulnScannerHandler(osvClient, llmBackend,
+		vulnscanner.WithEnrichTimeout(time.Duration(cfg.VulnScanner.EnrichTimeoutMs)*time.Millisecond),
+		vulnscanner.WithMaxConcurrent(cfg.VulnScanner.MaxConcurrent),
+		vulnscanner.WithMaxPerRequest(cfg.VulnScanner.MaxPerRequest),
+	)
 	vulnscanner.RegisterVulnScanner(dispatcher, vulnHandler)
+
+	// Periodically export Vuln-Scanner metrics as structured logs (CloudWatch-native).
+	go vulnHandler.StartMetricsReporter(ctx, time.Duration(cfg.VulnScanner.MetricsIntervalMs)*time.Millisecond)
 
 	// Clean-Arch: AI-powered architecture linting.
 	var defaultRules []cleanarch.Rule
