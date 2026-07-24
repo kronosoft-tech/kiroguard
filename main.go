@@ -16,6 +16,7 @@ import (
 	"github.com/luiferdev/kiroguard/internal/envguard"
 	"github.com/luiferdev/kiroguard/internal/finops"
 	"github.com/luiferdev/kiroguard/internal/iamguard"
+	"github.com/luiferdev/kiroguard/internal/lambdaguard"
 	"github.com/luiferdev/kiroguard/internal/llm"
 	"github.com/luiferdev/kiroguard/internal/rpc"
 	"github.com/luiferdev/kiroguard/internal/transport"
@@ -135,6 +136,17 @@ func main() {
 
 	// Periodically export IAM-Guard metrics as structured logs (CloudWatch-native).
 	go iamHandler.StartMetricsReporter(ctx, time.Duration(cfg.IAMGuard.MetricsIntervalMs)*time.Millisecond)
+
+	// LambdaGuard: serverless security analysis.
+	lambdaHandler := lambdaguard.NewLambdaGuardHandler(ctx,
+		lambdaguard.WithSeverityThreshold(cfg.LambdaGuard.SeverityThreshold),
+		lambdaguard.WithMaxFileSizeMB(cfg.LambdaGuard.MaxFileSizeMb),
+		lambdaguard.WithScanTimeout(time.Duration(cfg.LambdaGuard.ScanTimeoutMs)*time.Millisecond),
+	)
+	lambdaguard.RegisterLambdaGuard(dispatcher, lambdaHandler)
+
+	// Periodically export LambdaGuard metrics as structured logs (CloudWatch-native).
+	go lambdaHandler.StartMetricsReporter(ctx, time.Duration(cfg.LambdaGuard.MetricsIntervalMs)*time.Millisecond)
 
 	// --- Create the transport ---
 	var t transport.Transport

@@ -38,6 +38,12 @@ func Default() *Config {
 			MaxPerRequest:     5,
 			MetricsIntervalMs: 60000,
 		},
+		LambdaGuard: LambdaGuardConfig{
+			SeverityThreshold: "low",
+			MaxFileSizeMb:     5,
+			ScanTimeoutMs:     15000,
+			MetricsIntervalMs: 60000,
+		},
 		IAMGuard: IAMGuardConfig{
 			EnrichTimeoutMs:   5000,
 			ScanTimeoutMs:     10000,
