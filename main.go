@@ -88,8 +88,15 @@ func main() {
 
 	// Vuln-Scanner: dependency vulnerability scanning.
 	osvClient := vulnscanner.NewOSVClient()
-	vulnHandler := vulnscanner.NewVulnScannerHandler(osvClient, llmBackend)
+	vulnHandler := vulnscanner.NewVulnScannerHandler(osvClient, llmBackend,
+		vulnscanner.WithEnrichTimeout(time.Duration(cfg.VulnScanner.EnrichTimeoutMs)*time.Millisecond),
+		vulnscanner.WithMaxConcurrent(cfg.VulnScanner.MaxConcurrent),
+		vulnscanner.WithMaxPerRequest(cfg.VulnScanner.MaxPerRequest),
+	)
 	vulnscanner.RegisterVulnScanner(dispatcher, vulnHandler)
+
+	// Periodically export Vuln-Scanner metrics as structured logs (CloudWatch-native).
+	go vulnHandler.StartMetricsReporter(ctx, time.Duration(cfg.VulnScanner.MetricsIntervalMs)*time.Millisecond)
 
 	// Clean-Arch: AI-powered architecture linting.
 	var defaultRules []cleanarch.Rule
@@ -135,9 +142,10 @@ func main() {
 		t = sseT
 	}
 
-	// Wire the transport as the notifier for Clean-Arch so it can push
-	// asynchronous LLM enrichment to the client via JSON-RPC notifications.
+	// Wire the transport as the notifier for Clean-Arch and Vuln-Scanner so they
+	// can push asynchronous LLM enrichment to the client via JSON-RPC notifications.
 	archHandler.SetNotifier(t)
+	vulnHandler.SetNotifier(t)
 
 	// Create a MessageHandler that wraps the dispatcher's Dispatch method.
 	handler := func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
@@ -156,6 +164,9 @@ func main() {
 		slog.Warn("clean-arch enrichment drain incomplete", "error", derr)
 	}
 	drainCancel()
+
+	// Drain in-flight Vuln-Scanner enrichment goroutines as well.
+	vulnHandler.Shutdown()
 
 	if startErr != nil && ctx.Err() == nil {
 		slog.Error("transport error", "error", startErr)

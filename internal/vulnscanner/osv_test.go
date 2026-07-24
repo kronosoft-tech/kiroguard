@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -206,24 +207,27 @@ func TestQueryBatch_MultipleDependencies(t *testing.T) {
 			t.Fatalf("expected 5 queries, got %d", len(reqBody.Queries))
 		}
 
+		// Include severity so these are already "hydrated" (no follow-up calls);
+		// this test focuses on index-to-dependency mapping.
+		sev := []OSVSeverity{{Type: "CVSS_V3", Score: "5.0"}}
 		resp := osvQueryBatchResponse{
 			Results: []osvQueryResult{
 				{
 					Vulns: []OSVVulnerability{
-						{ID: "CVE-2021-0001", Summary: "Vuln in pkg-a"},
+						{ID: "CVE-2021-0001", Summary: "Vuln in pkg-a", Severity: sev},
 					},
 				},
 				{Vulns: nil}, // pkg-b: no vulns
 				{
 					Vulns: []OSVVulnerability{
-						{ID: "CVE-2021-0002", Summary: "Vuln 1 in pkg-c"},
-						{ID: "CVE-2021-0003", Summary: "Vuln 2 in pkg-c"},
+						{ID: "CVE-2021-0002", Summary: "Vuln 1 in pkg-c", Severity: sev},
+						{ID: "CVE-2021-0003", Summary: "Vuln 2 in pkg-c", Severity: sev},
 					},
 				},
 				{Vulns: nil}, // pkg-d: no vulns
 				{
 					Vulns: []OSVVulnerability{
-						{ID: "CVE-2021-0004", Summary: "Vuln in pkg-e"},
+						{ID: "CVE-2021-0004", Summary: "Vuln in pkg-e", Severity: sev},
 					},
 				},
 			},
@@ -288,5 +292,89 @@ func TestNewOSVClientWithURL_CustomURL(t *testing.T) {
 	client := NewOSVClientWithURL("http://localhost:8080")
 	if client.baseURL != "http://localhost:8080" {
 		t.Errorf("expected custom URL http://localhost:8080, got %s", client.baseURL)
+	}
+}
+
+func TestGetVuln_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/v1/vulns/") {
+			http.NotFound(w, r)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/v1/vulns/")
+		full := OSVVulnerability{
+			ID:       id,
+			Summary:  "full detail",
+			Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "9.8"}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(full)
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	v, err := client.GetVuln(context.Background(), "GHSA-abcd-1234")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v.ID != "GHSA-abcd-1234" {
+		t.Errorf("ID = %q, want GHSA-abcd-1234", v.ID)
+	}
+	if len(v.Severity) != 1 || v.Severity[0].Score != "9.8" {
+		t.Errorf("expected severity 9.8, got %+v", v.Severity)
+	}
+}
+
+func TestQueryBatch_HydratesMinimalVulns(t *testing.T) {
+	// querybatch returns MINIMAL vulns (id only), like the real OSV API.
+	// The client must hydrate them via /v1/vulns/{id}.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/querybatch":
+			json.NewEncoder(w).Encode(osvQueryBatchResponse{
+				Results: []osvQueryResult{
+					{Vulns: []OSVVulnerability{{ID: "CVE-2021-0001"}}}, // minimal
+				},
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/vulns/"):
+			id := strings.TrimPrefix(r.URL.Path, "/v1/vulns/")
+			json.NewEncoder(w).Encode(OSVVulnerability{
+				ID:       id,
+				Summary:  "hydrated summary",
+				Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "9.8"}},
+				Affected: []OSVAffected{
+					{
+						Package: OSVPackage{Name: "lodash", Ecosystem: "npm"},
+						Ranges:  []OSVRange{{Type: "SEMVER", Events: []OSVEvent{{Introduced: "0"}, {Fixed: "4.17.21"}}}},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	results, err := client.QueryBatch(context.Background(), []Dependency{{Name: "lodash", Version: "4.17.20", Ecosystem: "npm"}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	vulns := results["lodash"]
+	if len(vulns) != 1 {
+		t.Fatalf("expected 1 vuln, got %d", len(vulns))
+	}
+	if vulns[0].ID != "CVE-2021-0001" {
+		t.Errorf("ID = %q, want CVE-2021-0001", vulns[0].ID)
+	}
+	if len(vulns[0].Severity) == 0 {
+		t.Error("expected hydrated severity, got none")
+	}
+	if len(vulns[0].Affected) == 0 {
+		t.Error("expected hydrated affected ranges, got none")
+	}
+	if vulns[0].Summary != "hydrated summary" {
+		t.Errorf("Summary = %q, want hydrated summary", vulns[0].Summary)
 	}
 }
