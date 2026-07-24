@@ -57,6 +57,14 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Start fsnotify ConfigWatcher for zero-downtime hot-reloading on disk configuration changes.
+	if watcher, werr := config.NewConfigWatcher(*configFlag, cfg); werr == nil {
+		watcher.Start(ctx)
+		defer watcher.Stop()
+	} else {
+		slog.Warn("failed to initialize config hot-reloader", "error", werr)
+	}
+
 	// --- Initialize the LLM layer ---
 	// Heuristic provider is always available as fallback.
 	heuristic := llm.NewHeuristicProvider()
