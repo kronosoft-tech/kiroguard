@@ -1,15 +1,18 @@
 package vulnscanner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/luiferdev/kiroguard/internal/llm"
 	"github.com/luiferdev/kiroguard/internal/rpc"
@@ -355,6 +358,191 @@ func TestHandle_NoSessionNoEnrichment(t *testing.T) {
 	}
 }
 
+type mockNotifierFail struct{}
+
+func (m *mockNotifierFail) Send(_ context.Context, _ *rpc.Response) error {
+	return errors.New("send error")
+}
+
+func (m *mockNotifierFail) count() int { return 0 }
+
+func TestWithEnrichTimeout(t *testing.T) {
+	h := NewVulnScannerHandler(NewOSVClient(), nil)
+	h2 := NewVulnScannerHandler(NewOSVClient(), nil)
+	WithEnrichTimeout(2 * time.Second)(h2)
+	if h2.enrichTimeout != 2*time.Second {
+		t.Errorf("enrichTimeout = %v, want %v", h2.enrichTimeout, 2*time.Second)
+	}
+	WithEnrichTimeout(0)(h)
+	if h.enrichTimeout != defaultEnrichTimeout {
+		t.Errorf("enrichTimeout = %v, want %v", h.enrichTimeout, defaultEnrichTimeout)
+	}
+}
+
+func TestWithMaxConcurrent(t *testing.T) {
+	h := NewVulnScannerHandler(NewOSVClient(), nil)
+	h2 := NewVulnScannerHandler(NewOSVClient(), nil)
+	WithMaxConcurrent(10)(h2)
+	if h2.maxConcurrent != 10 {
+		t.Errorf("maxConcurrent = %d, want %d", h2.maxConcurrent, 10)
+	}
+	WithMaxConcurrent(0)(h)
+	if h.maxConcurrent != defaultMaxConcurrentEnrich {
+		t.Errorf("maxConcurrent = %d, want %d", h.maxConcurrent, defaultMaxConcurrentEnrich)
+	}
+}
+
+func TestWithMaxPerRequest(t *testing.T) {
+	h := NewVulnScannerHandler(NewOSVClient(), nil)
+	h2 := NewVulnScannerHandler(NewOSVClient(), nil)
+	WithMaxPerRequest(3)(h2)
+	if h2.maxPerRequest != 3 {
+		t.Errorf("maxPerRequest = %d, want %d", h2.maxPerRequest, 3)
+	}
+	WithMaxPerRequest(0)(h)
+	if h.maxPerRequest != defaultMaxEnrichPerRequest {
+		t.Errorf("maxPerRequest = %d, want %d", h.maxPerRequest, defaultMaxEnrichPerRequest)
+	}
+}
+
+func TestNewVulnScannerHandler_WithOptions(t *testing.T) {
+	h := NewVulnScannerHandler(NewOSVClient(), nil, WithEnrichTimeout(2*time.Second))
+	if h.enrichTimeout != 2*time.Second {
+		t.Errorf("enrichTimeout = %v, want %v", h.enrichTimeout, 2*time.Second)
+	}
+}
+
+func TestStartMetricsReporter_ZeroInterval(t *testing.T) {
+	var buf bytes.Buffer
+	handler := NewVulnScannerHandler(NewOSVClient(), nil)
+	handler.logger = slog.New(slog.NewJSONHandler(&buf, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		handler.StartMetricsReporter(ctx, 0)
+		close(done)
+	}()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartMetricsReporter did not return after cancel")
+	}
+
+	if n := strings.Count(buf.String(), `"event":"metrics_report"`); n < 1 {
+		t.Errorf("expected at least 1 metrics_report, got %d", n)
+	}
+}
+
+func TestShutdown(t *testing.T) {
+	handler := NewVulnScannerHandler(NewOSVClient(), nil)
+	handler.Shutdown()
+	if handler.baseCtx.Err() == nil {
+		t.Error("expected baseCtx to be cancelled after Shutdown")
+	}
+}
+
+func TestHandle_ManifestParseError(t *testing.T) {
+	handler := NewVulnScannerHandler(NewOSVClient(), nil)
+	params, _ := json.Marshal(VulnScannerInput{Manifest: `[]`, Ecosystem: "npm"})
+	_, err := handler.Handle(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var ve *rpc.ValidationError
+	if !errors.As(err, &ve) {
+		t.Errorf("expected error to wrap *rpc.ValidationError, got %T: %v", err, err)
+	}
+}
+
+func TestNotificationSendFailure(t *testing.T) {
+	osvResp := osvQueryBatchResponse{
+		Results: []osvQueryResult{
+			{Vulns: []OSVVulnerability{{ID: "CVE-2021-1", Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "9.0"}}}}},
+		},
+	}
+	server := newTestOSVServer(t, osvResp)
+	defer server.Close()
+
+	mockLLM := &mockLLMBackend{response: &llm.LLMResponse{Text: "fix it"}}
+	notifier := &mockNotifierFail{}
+	handler := NewVulnScannerHandler(NewOSVClientWithURL(server.URL), mockLLM)
+	handler.SetNotifier(notifier)
+
+	params, _ := json.Marshal(VulnScannerInput{Manifest: `{"dependencies": {"lodash": "4.17.0"}}`, Ecosystem: "npm"})
+	ctx := rpc.WithClientID(context.Background(), "sess-1")
+	_, err := handler.Handle(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	handler.waitBackground()
+}
+
+func TestStartBackgroundEnrichment_NilLLMResponse(t *testing.T) {
+	osvResp := osvQueryBatchResponse{
+		Results: []osvQueryResult{
+			{Vulns: []OSVVulnerability{{ID: "CVE-2021-1", Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "9.0"}}}}},
+		},
+	}
+	server := newTestOSVServer(t, osvResp)
+	defer server.Close()
+
+	mockLLM := &mockLLMBackend{response: nil}
+	notifier := &mockNotifier{}
+	handler := NewVulnScannerHandler(NewOSVClientWithURL(server.URL), mockLLM)
+	handler.SetNotifier(notifier)
+
+	params, _ := json.Marshal(VulnScannerInput{Manifest: `{"dependencies": {"lodash": "4.17.0"}}`, Ecosystem: "npm"})
+	ctx := rpc.WithClientID(context.Background(), "sess-1")
+	_, err := handler.Handle(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	handler.waitBackground()
+
+	if n := handler.metrics.EnrichmentsOK.Load(); n != 0 {
+		t.Errorf("expected 0 enrichments OK, got %d", n)
+	}
+}
+
+func TestStartBackgroundEnrichment_EmptyLLMResponse(t *testing.T) {
+	osvResp := osvQueryBatchResponse{
+		Results: []osvQueryResult{
+			{Vulns: []OSVVulnerability{{ID: "CVE-2021-1", Severity: []OSVSeverity{{Type: "CVSS_V3", Score: "9.0"}}}}},
+		},
+	}
+	server := newTestOSVServer(t, osvResp)
+	defer server.Close()
+
+	mockLLM := &mockLLMBackend{response: &llm.LLMResponse{Text: ""}}
+	notifier := &mockNotifier{}
+	handler := NewVulnScannerHandler(NewOSVClientWithURL(server.URL), mockLLM)
+	handler.SetNotifier(notifier)
+
+	params, _ := json.Marshal(VulnScannerInput{Manifest: `{"dependencies": {"lodash": "4.17.0"}}`, Ecosystem: "npm"})
+	ctx := rpc.WithClientID(context.Background(), "sess-1")
+	_, err := handler.Handle(ctx, params)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	handler.waitBackground()
+
+	if n := handler.metrics.EnrichmentsOK.Load(); n != 0 {
+		t.Errorf("expected 0 enrichments OK, got %d", n)
+	}
+}
+
+func TestErrString(t *testing.T) {
+	if got := errString(nil); got != "" {
+		t.Errorf("errString(nil) = %q, want %q", got, "")
+	}
+	if got := errString(errors.New("oops")); got != "oops" {
+		t.Errorf(`errString(errors.New("oops")) = %q, want %q`, got, "oops")
+	}
+}
+
 func TestRegisterVulnScanner(t *testing.T) {
 	d := rpc.NewDispatcher()
 	RegisterVulnScanner(d, NewVulnScannerHandler(NewOSVClient(), nil))
@@ -437,6 +625,12 @@ func TestParseSeverityScore(t *testing.T) {
 		{"direct numeric", []OSVSeverity{{Type: "CVSS_V3", Score: "9.8"}}, 9.8, 9.8},
 		{"cvss vector high", []OSVSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}}, 7.0, 10.0},
 		{"empty string", []OSVSeverity{{Type: "CVSS_V3", Score: ""}}, 0, 0},
+		{"unknown format", []OSVSeverity{{Type: "CVSS_V3", Score: "unknown-format"}}, 0, 0},
+		{"cvss vector 2x:H", []OSVSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:L/A:L"}}, 7.5, 7.5},
+		{"cvss vector 1x:H", []OSVSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:L/I:L/A:L"}}, 5.5, 5.5},
+		{"cvss vector 2x:M", []OSVSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:M/PR:N/UI:N/S:U/C:M/I:L/A:L"}}, 5.5, 5.5},
+		{"cvss vector 1x:M", []OSVSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:M/PR:N/UI:N/S:U/C:L/I:L/A:L"}}, 3.5, 3.5},
+		{"cvss vector no H or M", []OSVSeverity{{Type: "CVSS_V3", Score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:L"}}, 2.0, 2.0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

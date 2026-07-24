@@ -380,3 +380,92 @@ requests==2.28.0 # http client
 		t.Errorf("dep[1] = %+v, want requests@2.28.0", deps[1])
 	}
 }
+
+func TestParseLockPackages_BadPackagesField(t *testing.T) {
+	content := `{"name":"p","lockfileVersion":3,"packages":"not-an-object"}`
+
+	deps, err := ParseManifest(content, "npm")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected 0 dependencies, got %d", len(deps))
+	}
+}
+
+func TestParseLockPackages_EmptyVersion(t *testing.T) {
+	content := `{"name":"p","lockfileVersion":3,"packages":{"node_modules/foo":{"version":"1.0.0"},"node_modules/bar":{}}}`
+
+	deps, err := ParseManifest(content, "npm")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("expected 1 dependency, got %d: %+v", len(deps), deps)
+	}
+	if deps[0].Name != "foo" || deps[0].Version != "1.0.0" {
+		t.Errorf("dep = %+v, want foo@1.0.0", deps[0])
+	}
+}
+
+func TestParseLockDependencies_BadDepsField(t *testing.T) {
+	content := `{"name":"p","lockfileVersion":1,"dependencies":"string"}`
+
+	deps, err := ParseManifest(content, "npm")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected 0 dependencies, got %d", len(deps))
+	}
+}
+
+func TestParseLockDependencies_EmptyVersion(t *testing.T) {
+	content := `{"name":"p","lockfileVersion":1,"dependencies":{"express":{"version":"4.18.0"},"emptyver":{}}}`
+
+	deps, err := ParseManifest(content, "npm")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("expected 1 dependency, got %d: %+v", len(deps), deps)
+	}
+	if deps[0].Name != "express" || deps[0].Version != "4.18.0" {
+		t.Errorf("dep = %+v, want express@4.18.0", deps[0])
+	}
+}
+
+func TestExtractPackageName(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"some/random/path", ""},
+		{"node_modules/", ""},
+		{"node_modules/foo", "foo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := extractPackageName(tt.path)
+			if got != tt.want {
+				t.Errorf("extractPackageName(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParsePip_OperatorOnlyLine(t *testing.T) {
+	content := "==1.0.0\nflask==2.0.0"
+
+	deps, err := ParseManifest(content, "pip")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 1 {
+		t.Fatalf("expected 1 dependency, got %d: %+v", len(deps), deps)
+	}
+	if deps[0].Name != "flask" || deps[0].Version != "2.0.0" {
+		t.Errorf("dep = %+v, want flask@2.0.0", deps[0])
+	}
+}

@@ -378,3 +378,110 @@ func TestQueryBatch_HydratesMinimalVulns(t *testing.T) {
 		t.Errorf("Summary = %q, want hydrated summary", vulns[0].Summary)
 	}
 }
+
+func TestGetVuln_RetriesExhausted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	_, err := client.GetVuln(context.Background(), "CVE-0000-0000")
+	if err == nil {
+		t.Fatal("expected error when retries exhausted")
+	}
+}
+
+func TestGetVuln_BadRequest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	_, err := client.GetVuln(context.Background(), "CVE-0000-0000")
+	if err == nil {
+		t.Fatal("expected error for 400 status")
+	}
+}
+
+func TestGetVuln_BadJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"not json without closing`))
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	_, err := client.GetVuln(context.Background(), "CVE-0000-0000")
+	if err == nil {
+		t.Fatal("expected decode error")
+	}
+	if !strings.Contains(err.Error(), "decode") {
+		t.Errorf("expected error containing 'decode', got: %v", err)
+	}
+}
+
+func TestQueryBatch_HydrateFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/querybatch":
+			json.NewEncoder(w).Encode(osvQueryBatchResponse{
+				Results: []osvQueryResult{
+					{Vulns: []OSVVulnerability{{ID: "CVE-2021-0001"}}},
+				},
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/vulns/"):
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	results, err := client.QueryBatch(context.Background(), []Dependency{{Name: "lodash", Version: "4.17.20", Ecosystem: "npm"}})
+	if err != nil {
+		t.Fatalf("QueryBatch should not return error on hydrate failure: %v", err)
+	}
+	vulns := results["lodash"]
+	if len(vulns) != 1 {
+		t.Fatalf("expected 1 vuln, got %d", len(vulns))
+	}
+	if vulns[0].ID != "CVE-2021-0001" {
+		t.Errorf("ID = %q, want CVE-2021-0001", vulns[0].ID)
+	}
+	if len(vulns[0].Severity) != 0 {
+		t.Error("expected minimal vuln (no severity) on failed hydrate")
+	}
+}
+
+func TestQueryBatch_BadJSONResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{invalid`))
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	_, err := client.QueryBatch(context.Background(), []Dependency{{Name: "lodash", Version: "4.17.20", Ecosystem: "npm"}})
+	if err == nil {
+		t.Fatal("expected error for bad JSON response")
+	}
+}
+
+func TestQueryBatch_ContextCancelledDuringRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cancel()
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := NewOSVClientWithURL(server.URL)
+	_, err := client.QueryBatch(ctx, []Dependency{{Name: "test", Version: "1.0", Ecosystem: "npm"}})
+	if err == nil {
+		t.Fatal("expected error when context cancelled during retry")
+	}
+}
