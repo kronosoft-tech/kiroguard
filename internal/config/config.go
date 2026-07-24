@@ -13,9 +13,18 @@ import (
 type Config struct {
 	Transport TransportConfig `yaml:"transport"`
 	LLM       LLMConfig       `yaml:"llm"`
-	EnvGuard  EnvGuardConfig  `yaml:"envguard"`
-	FinOps    FinOpsConfig    `yaml:"finops"`
-	CleanArch CleanArchConfig `yaml:"cleanarch"`
+	EnvGuard    EnvGuardConfig    `yaml:"envguard"`
+	FinOps      FinOpsConfig      `yaml:"finops"`
+	CleanArch   CleanArchConfig   `yaml:"cleanarch"`
+	VulnScanner VulnScannerConfig `yaml:"vulnscanner"`
+}
+
+// VulnScannerConfig configures the Vuln-Scanner module.
+type VulnScannerConfig struct {
+	EnrichTimeoutMs   int `yaml:"enrich_timeout_ms"`           // per-LLM-call deadline, default 1500
+	MaxConcurrent     int `yaml:"max_concurrent"`              // GLOBAL max concurrent LLM calls, default 5
+	MaxPerRequest     int `yaml:"max_enrichments_per_request"` // per-request enrichment cap, default 5
+	MetricsIntervalMs int `yaml:"metrics_interval_ms"`         // periodic metrics report cadence, default 60000
 }
 
 // TransportConfig configures the communication transport.

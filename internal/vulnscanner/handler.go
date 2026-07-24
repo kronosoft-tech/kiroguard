@@ -94,6 +94,7 @@ type VulnScannerHandler struct {
 	notifier  rpc.Notifier   // may be nil; nil means no enrichment
 
 	enrichTimeout time.Duration
+	maxConcurrent int
 	maxPerRequest int
 	globalSem     chan struct{} // bounds concurrent LLM calls across all requests
 
@@ -107,20 +108,56 @@ type VulnScannerHandler struct {
 	logger  *slog.Logger
 }
 
+// Option configures a VulnScannerHandler at construction time.
+type Option func(*VulnScannerHandler)
+
+// WithEnrichTimeout overrides the per-LLM-call deadline (default 1.5s).
+func WithEnrichTimeout(d time.Duration) Option {
+	return func(h *VulnScannerHandler) {
+		if d > 0 {
+			h.enrichTimeout = d
+		}
+	}
+}
+
+// WithMaxConcurrent overrides the GLOBAL max concurrent LLM calls (default 5).
+func WithMaxConcurrent(n int) Option {
+	return func(h *VulnScannerHandler) {
+		if n > 0 {
+			h.maxConcurrent = n
+		}
+	}
+}
+
+// WithMaxPerRequest overrides the per-request enrichment cap (default 5).
+func WithMaxPerRequest(n int) Option {
+	return func(h *VulnScannerHandler) {
+		if n > 0 {
+			h.maxPerRequest = n
+		}
+	}
+}
+
 // NewVulnScannerHandler creates a new VulnScannerHandler. llmBackend may be nil.
-func NewVulnScannerHandler(osvClient *OSVClient, llmBackend llm.LLMBackend) *VulnScannerHandler {
+func NewVulnScannerHandler(osvClient *OSVClient, llmBackend llm.LLMBackend, opts ...Option) *VulnScannerHandler {
 	baseCtx, cancel := context.WithCancel(context.Background())
-	return &VulnScannerHandler{
+	h := &VulnScannerHandler{
 		osvClient:     osvClient,
 		llm:           llmBackend,
 		enrichTimeout: defaultEnrichTimeout,
+		maxConcurrent: defaultMaxConcurrentEnrich,
 		maxPerRequest: defaultMaxEnrichPerRequest,
-		globalSem:     make(chan struct{}, defaultMaxConcurrentEnrich),
 		baseCtx:       baseCtx,
 		baseCancel:    cancel,
 		metrics:       &Metrics{},
 		logger:        logging.ModuleLogger("vuln-scanner"),
 	}
+	for _, opt := range opts {
+		opt(h)
+	}
+	// Global semaphore sized after options are applied.
+	h.globalSem = make(chan struct{}, h.maxConcurrent)
+	return h
 }
 
 // MetricsSnapshot returns a point-in-time copy of the operational counters.

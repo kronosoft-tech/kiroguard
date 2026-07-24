@@ -32,5 +32,11 @@ func Default() *Config {
 			MaxEnrichmentsPerRequest: 25,
 			MetricsIntervalMs:        60000,
 		},
+		VulnScanner: VulnScannerConfig{
+			EnrichTimeoutMs:   1500,
+			MaxConcurrent:     5,
+			MaxPerRequest:     5,
+			MetricsIntervalMs: 60000,
+		},
 	}
 }
