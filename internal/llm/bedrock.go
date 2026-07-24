@@ -63,6 +63,19 @@ func NewBedrockProvider(ctx context.Context, region string, modelID string) (*Be
 	}, nil
 }
 
+// NewBedrockProviderWithClient creates a provider with an explicit client, useful
+// for testing or when custom AWS config is required. If modelID is empty,
+// DefaultBedrockModel is used.
+func NewBedrockProviderWithClient(client *bedrockruntime.Client, modelID string) *BedrockProvider {
+	if modelID == "" {
+		modelID = DefaultBedrockModel
+	}
+	return &BedrockProvider{
+		client:  client,
+		modelID: modelID,
+	}
+}
+
 // Complete sends a prompt to Bedrock and returns the response.
 func (b *BedrockProvider) Complete(ctx context.Context, p Prompt) (*LLMResponse, error) {
 	// Structured-output requests may carry a unified diff, so give them a larger
