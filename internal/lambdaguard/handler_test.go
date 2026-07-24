@@ -25,7 +25,7 @@ Resources:
 `
 	os.WriteFile(filepath.Join(dir, "template.yaml"), []byte(content), 0644)
 
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 	params, _ := json.Marshal(Params{DirectoryPath: dir})
 
 	result, err := handler.Handle(context.Background(), params)
@@ -46,7 +46,7 @@ Resources:
 }
 
 func TestHandle_EmptyDirectoryPath(t *testing.T) {
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 	params, _ := json.Marshal(Params{DirectoryPath: ""})
 
 	_, err := handler.Handle(context.Background(), params)
@@ -60,7 +60,7 @@ func TestHandle_EmptyDirectoryPath(t *testing.T) {
 }
 
 func TestHandle_NonexistentDirectory(t *testing.T) {
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 	params, _ := json.Marshal(Params{DirectoryPath: "/nonexistent/path"})
 
 	_, err := handler.Handle(context.Background(), params)
@@ -75,7 +75,7 @@ func TestHandle_NonexistentDirectory(t *testing.T) {
 
 func TestHandle_InvalidSeverityThreshold(t *testing.T) {
 	dir := t.TempDir()
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 	params, _ := json.Marshal(Params{
 		DirectoryPath:     dir,
 		SeverityThreshold: "invalid",
@@ -107,7 +107,7 @@ Resources:
 `
 	os.WriteFile(filepath.Join(dir, "template.yaml"), []byte(content), 0644)
 
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 	params, _ := json.Marshal(Params{DirectoryPath: dir})
 
 	result, err := handler.Handle(context.Background(), params)
@@ -137,7 +137,7 @@ Resources:
 `
 	os.WriteFile(filepath.Join(dir, "template.yaml"), []byte(content), 0644)
 
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 	params, _ := json.Marshal(Params{
 		DirectoryPath:     dir,
 		SeverityThreshold: "critical",
@@ -181,7 +181,7 @@ func TestMetricsSnapshot(t *testing.T) {
 }
 
 func TestShutdown(t *testing.T) {
-	handler := NewLambdaGuardHandler(context.Background())
+	handler := NewLambdaGuardHandler()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
@@ -194,7 +194,7 @@ func TestShutdown(t *testing.T) {
 
 func TestOptions(t *testing.T) {
 	metrics := &Metrics{}
-	handler := NewLambdaGuardHandler(context.Background(),
+	handler := NewLambdaGuardHandler(
 		WithMetrics(metrics),
 		WithSeverityThreshold("high"),
 		WithMaxFileSizeMB(10),
@@ -220,8 +220,6 @@ func TestOptions(t *testing.T) {
 }
 
 func TestSeverityThresholdFilter(t *testing.T) {
-	handler := NewLambdaGuardHandler(context.Background(), WithSeverityThreshold("high"))
-
 	findings := []LambdaFinding{
 		{CheckID: "low", Severity: "low"},
 		{CheckID: "medium", Severity: "medium"},
@@ -229,7 +227,7 @@ func TestSeverityThresholdFilter(t *testing.T) {
 		{CheckID: "critical", Severity: "critical"},
 	}
 
-	filtered := handler.filterByThreshold(findings, "high")
+	filtered := filterByThreshold(findings, "high")
 	if len(filtered) != 2 {
 		t.Fatalf("got %d filtered, want 2", len(filtered))
 	}
@@ -242,8 +240,6 @@ func TestSeverityThresholdFilter(t *testing.T) {
 }
 
 func TestFilterByThreshold(t *testing.T) {
-	handler := NewLambdaGuardHandler(context.Background())
-
 	tests := []struct {
 		threshold string
 		expected  int
@@ -262,7 +258,7 @@ func TestFilterByThreshold(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		filtered := handler.filterByThreshold(findings, tt.threshold)
+		filtered := filterByThreshold(findings, tt.threshold)
 		if len(filtered) != tt.expected {
 			t.Errorf("threshold=%q: got %d, want %d", tt.threshold, len(filtered), tt.expected)
 		}

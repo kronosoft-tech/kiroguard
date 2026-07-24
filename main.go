@@ -138,7 +138,7 @@ func main() {
 	go iamHandler.StartMetricsReporter(ctx, time.Duration(cfg.IAMGuard.MetricsIntervalMs)*time.Millisecond)
 
 	// LambdaGuard: serverless security analysis.
-	lambdaHandler := lambdaguard.NewLambdaGuardHandler(ctx,
+	lambdaHandler := lambdaguard.NewLambdaGuardHandler(
 		lambdaguard.WithSeverityThreshold(cfg.LambdaGuard.SeverityThreshold),
 		lambdaguard.WithMaxFileSizeMB(cfg.LambdaGuard.MaxFileSizeMb),
 		lambdaguard.WithScanTimeout(time.Duration(cfg.LambdaGuard.ScanTimeoutMs)*time.Millisecond),
@@ -197,6 +197,11 @@ func main() {
 	// Drain in-flight IAM-Guard background policy generation.
 	if derr := iamHandler.Shutdown(drainCtx); derr != nil {
 		slog.Warn("iam-guard policy generation drain incomplete", "error", derr)
+	}
+
+	// Drain in-flight LambdaGuard scans before exiting.
+	if derr := lambdaHandler.Shutdown(drainCtx); derr != nil {
+		slog.Warn("lambda-guard scan drain incomplete", "error", derr)
 	}
 
 	if startErr != nil && ctx.Err() == nil {

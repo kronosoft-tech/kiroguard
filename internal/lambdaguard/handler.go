@@ -77,7 +77,7 @@ type LambdaGuardHandler struct {
 	logger  *slog.Logger
 }
 
-func NewLambdaGuardHandler(ctx context.Context, opts ...Option) *LambdaGuardHandler {
+func NewLambdaGuardHandler(opts ...Option) *LambdaGuardHandler {
 	baseCtx, cancel := context.WithCancel(context.Background())
 	h := &LambdaGuardHandler{
 		severityThreshold: defaultSeverityThreshold,
@@ -188,17 +188,24 @@ func (h *LambdaGuardHandler) Handle(ctx context.Context, params json.RawMessage)
 	scanCtx, scanCancel := context.WithTimeout(ctx, h.scanTimeout)
 	defer scanCancel()
 
-	configs, err := ParseLambdaConfigs(p.DirectoryPath)
+	configs, err := ParseLambdaConfigs(scanCtx, p.DirectoryPath, h.maxFileSizeMB)
 	if err != nil {
 		return nil, fmt.Errorf("parse lambda configs: %w", err)
 	}
 
 	h.metrics.FunctionsTotal.Add(int64(len(configs)))
 
+	filesScanned := 0
 	var allFindings []LambdaFinding
 	for i := range configs {
+		select {
+		case <-scanCtx.Done():
+			return nil, fmt.Errorf("scan cancelled: %w", scanCtx.Err())
+		default:
+		}
 		findings := h.analyzeFunction(&configs[i], p.Checks, threshold)
 		allFindings = append(allFindings, findings...)
+		filesScanned++
 	}
 
 	h.metrics.FindingsTotal.Add(int64(len(allFindings)))
@@ -207,8 +214,6 @@ func (h *LambdaGuardHandler) Handle(ctx context.Context, params json.RawMessage)
 			h.metrics.CriticalFindings.Add(1)
 		}
 	}
-
-	_ = scanCtx
 
 	bySeverity := map[string]int{}
 	byCategory := map[string]int{}
@@ -223,11 +228,12 @@ func (h *LambdaGuardHandler) Handle(ctx context.Context, params json.RawMessage)
 		BySeverity:     bySeverity,
 		ByCategory:     byCategory,
 		ScanTimeMs:     time.Since(start).Milliseconds(),
-		FilesScanned:   len(allFindings),
+		FilesScanned:   filesScanned,
 	}
 
 	h.logger.Info("scan_completed",
 		"event", "scan_completed",
+		"target", p.DirectoryPath,
 		"functions", len(configs),
 		"findings", len(allFindings),
 		"latency_ms", summary.ScanTimeMs)
@@ -243,19 +249,14 @@ func (h *LambdaGuardHandler) Handle(ctx context.Context, params json.RawMessage)
 func (h *LambdaGuardHandler) analyzeFunction(cfg *LambdaConfig, checks []string, threshold string) []LambdaFinding {
 	var findings []LambdaFinding
 
-	iamFindings := AnalyzeIAM(cfg)
-	findings = append(findings, iamFindings...)
+	findings = append(findings, AnalyzeIAM(cfg)...)
+	findings = append(findings, ScanEnvVars(cfg)...)
+	findings = append(findings, ApplyBestPractices(cfg, checks)...)
 
-	envFindings := ScanEnvVars(cfg)
-	findings = append(findings, envFindings...)
-
-	bpFindings := ApplyBestPractices(cfg, checks)
-	findings = append(findings, bpFindings...)
-
-	return h.filterByThreshold(findings, threshold)
+	return filterByThreshold(findings, threshold)
 }
 
-func (h *LambdaGuardHandler) filterByThreshold(findings []LambdaFinding, threshold string) []LambdaFinding {
+func filterByThreshold(findings []LambdaFinding, threshold string) []LambdaFinding {
 	severityOrder := map[string]int{
 		"critical": 4,
 		"high":     3,

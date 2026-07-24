@@ -1,6 +1,7 @@
 package lambdaguard
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -33,14 +34,25 @@ var (
 	terraformResourceRE = regexp.MustCompile(`resource\s+"aws_lambda_function"\s+"([^"]+)"`)
 )
 
-var defaultIaCMaxFileSize int64 = 5 * 1024 * 1024
+const defaultIaCMaxFileSize int64 = 5 * 1024 * 1024
 
-func ParseLambdaConfigs(dir string) ([]LambdaConfig, error) {
+func ParseLambdaConfigs(ctx context.Context, dir string, maxFileSizeMB int) ([]LambdaConfig, error) {
 	var configs []LambdaConfig
+
+	maxSize := int64(maxFileSizeMB) * 1024 * 1024
+	if maxSize <= 0 {
+		maxSize = defaultIaCMaxFileSize
+	}
 
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
 		}
 
 		if d.IsDir() {
@@ -63,7 +75,7 @@ func ParseLambdaConfigs(dir string) ([]LambdaConfig, error) {
 			return nil
 		}
 
-		if info.Size() > defaultIaCMaxFileSize {
+		if info.Size() > maxSize {
 			slog.Warn("file exceeds max size, skipping", "path", path, "size_mb", info.Size()/(1024*1024))
 			return nil
 		}

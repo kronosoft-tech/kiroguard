@@ -1,6 +1,7 @@
 package lambdaguard
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,7 +27,7 @@ Resources:
 		t.Fatal(err)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -66,7 +67,7 @@ Resources:
 		t.Fatal(err)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -91,7 +92,7 @@ functions:
 		t.Fatal(err)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -134,7 +135,7 @@ resource "aws_lambda_function" "my_func" {
 		t.Fatal(err)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -175,7 +176,7 @@ new lambda.Function(this, 'MyFunction', {
 		t.Fatal(err)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -212,7 +213,7 @@ resource "aws_lambda_function" "func2" {
 }
 `), 0644)
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestParseLambdaConfigs_NoIaCFiles(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hello"), 0644)
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestParseLambdaConfigs_NoIaCFiles(t *testing.T) {
 func TestParseLambdaConfigs_EmptyDirectory(t *testing.T) {
 	dir := t.TempDir()
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -264,7 +265,7 @@ func TestParseLambdaConfigs_FileOver5MB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -288,7 +289,7 @@ Resources:
       Runtime: provided.al2023
 `), 0644)
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -313,7 +314,7 @@ Resources:
 `), 0644)
 	}
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
@@ -337,7 +338,7 @@ Resources:
 `
 	os.WriteFile(path, []byte(content), 0644)
 
-	configs, err := ParseLambdaConfigs(dir)
+	configs, err := ParseLambdaConfigs(context.Background(), dir, 5)
 	if err != nil {
 		t.Fatalf("ParseLambdaConfigs error: %v", err)
 	}
