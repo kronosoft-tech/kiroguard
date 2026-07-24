@@ -15,6 +15,7 @@ import (
 	"github.com/luiferdev/kiroguard/internal/config"
 	"github.com/luiferdev/kiroguard/internal/envguard"
 	"github.com/luiferdev/kiroguard/internal/finops"
+	"github.com/luiferdev/kiroguard/internal/iamguard"
 	"github.com/luiferdev/kiroguard/internal/llm"
 	"github.com/luiferdev/kiroguard/internal/rpc"
 	"github.com/luiferdev/kiroguard/internal/transport"
@@ -123,6 +124,18 @@ func main() {
 	finopsHandler := finops.NewFinOpsHandler(detector, estimator, llmBackend)
 	finops.RegisterFinOps(dispatcher, finopsHandler)
 
+	// IAM-Guard: least-privilege IAM policy enforcement.
+	iamHandler := iamguard.NewIAMGuardHandler(llmBackend,
+		iamguard.WithEnrichTimeout(time.Duration(cfg.IAMGuard.EnrichTimeoutMs)*time.Millisecond),
+		iamguard.WithScanTimeout(time.Duration(cfg.IAMGuard.ScanTimeoutMs)*time.Millisecond),
+		iamguard.WithMaxConcurrent(cfg.IAMGuard.MaxConcurrent),
+		iamguard.WithMaxFileSize(int64(cfg.IAMGuard.MaxFileSizeMb)*1024*1024),
+	)
+	iamguard.RegisterIAMGuard(dispatcher, iamHandler)
+
+	// Periodically export IAM-Guard metrics as structured logs (CloudWatch-native).
+	go iamHandler.StartMetricsReporter(ctx, time.Duration(cfg.IAMGuard.MetricsIntervalMs)*time.Millisecond)
+
 	// --- Create the transport ---
 	var t transport.Transport
 	switch cfg.Transport.Type {
@@ -142,10 +155,11 @@ func main() {
 		t = sseT
 	}
 
-	// Wire the transport as the notifier for Clean-Arch and Vuln-Scanner so they
-	// can push asynchronous LLM enrichment to the client via JSON-RPC notifications.
+	// Wire the transport as the notifier for modules that push asynchronous LLM
+	// enrichment to the client via JSON-RPC notifications.
 	archHandler.SetNotifier(t)
 	vulnHandler.SetNotifier(t)
+	iamHandler.SetNotifier(t)
 
 	// Create a MessageHandler that wraps the dispatcher's Dispatch method.
 	handler := func(ctx context.Context, req *rpc.Request) (*rpc.Response, error) {
@@ -167,6 +181,11 @@ func main() {
 
 	// Drain in-flight Vuln-Scanner enrichment goroutines as well.
 	vulnHandler.Shutdown()
+
+	// Drain in-flight IAM-Guard background policy generation.
+	if derr := iamHandler.Shutdown(drainCtx); derr != nil {
+		slog.Warn("iam-guard policy generation drain incomplete", "error", derr)
+	}
 
 	if startErr != nil && ctx.Err() == nil {
 		slog.Error("transport error", "error", startErr)
