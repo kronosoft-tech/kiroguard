@@ -47,6 +47,41 @@ func TestIsAWSSDKImport_NonAWS(t *testing.T) {
 	}
 }
 
+func TestIsAWSSDKImport_WithSubPackage(t *testing.T) {
+	svc, ok := isAWSSDKImport("github.com/aws/aws-sdk-go-v2/service/s3/api")
+	if !ok {
+		t.Fatal("expected ok=true for sub-package import")
+	}
+	if svc != "s3" {
+		t.Fatalf("service = %q, want %q", svc, "s3")
+	}
+}
+
+func TestIsAWSSDKImport_EmptyService(t *testing.T) {
+	_, ok := isAWSSDKImport("github.com/aws/aws-sdk-go-v2/service/")
+	if ok {
+		t.Fatal("expected ok=false for empty service")
+	}
+}
+
+func TestContainsString_Found(t *testing.T) {
+	if !containsString([]string{"a", "b", "c"}, "b") {
+		t.Error("expected true for present string")
+	}
+}
+
+func TestContainsString_NotFound(t *testing.T) {
+	if containsString([]string{"a", "b", "c"}, "z") {
+		t.Error("expected false for absent string")
+	}
+}
+
+func TestContainsString_EmptySlice(t *testing.T) {
+	if containsString([]string{}, "a") {
+		t.Error("expected false for empty slice")
+	}
+}
+
 func TestIsAWSSDKImport_Core(t *testing.T) {
 	_, ok := isAWSSDKImport("github.com/aws/aws-sdk-go-v2/config")
 	if ok {
@@ -325,5 +360,151 @@ func TestAnalyzeGoSDKCalls_NonexistentDir(t *testing.T) {
 	_, _, err := AnalyzeGoSDKCalls("/nonexistent/path/that/does/not/exist")
 	if err == nil {
 		t.Fatal("expected error for nonexistent dir")
+	}
+}
+
+func TestAnalyzeGoSDKCalls_NotADirectory(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "file.txt")
+	if err := os.WriteFile(filePath, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := AnalyzeGoSDKCalls(filePath)
+	if err == nil {
+		t.Fatal("expected error for file path (not a directory)")
+	}
+}
+
+func TestAnalyzeGoSDKCalls_AliasedSDKImport(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main
+
+import (
+	"context"
+	s3client "github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+func main() {
+	ctx := context.TODO()
+	cfg := struct{}{}
+	client := s3client.NewFromConfig(cfg)
+	client.GetObject(ctx, nil)
+}
+`)
+	actions, _, err := AnalyzeGoSDKCalls(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action for aliased import, got %d", len(actions))
+	}
+	if actions[0].Action != "s3:GetObject" {
+		t.Errorf("action = %q, want %q", actions[0].Action, "s3:GetObject")
+	}
+}
+
+func TestAnalyzeGoSDKCalls_SDKImportNoNewFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main
+
+import (
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+func main() {
+	// SDK imported but no NewFromConfig usage
+	println(s3.ChecksumAlgorithmCRC32)
+}
+`)
+	actions, usages, err := AnalyzeGoSDKCalls(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 0 {
+		t.Errorf("expected 0 actions, got %d", len(actions))
+	}
+	if len(usages) != 0 {
+		t.Errorf("expected 0 usages, got %d", len(usages))
+	}
+}
+
+func TestAnalyzeGoSDKCalls_ASTFallbackPaths(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "main.go", `package main
+
+import (
+	"context"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+type Inner struct{}
+func (i Inner) Method() Inner { return Inner{} }
+func someFunc() int { return 0 }
+
+func main() {
+	ctx := context.TODO()
+	cfg := struct{}{}
+	client := s3.NewFromConfig(cfg)
+	client.GetObject(ctx, nil)
+	client.PutObject(ctx, nil)
+
+	// LHS is IndexExpr, not Ident → hits AST fallback line 131-133
+	m := map[string]int{}
+	m["k"] = 1
+
+	// RHS is BasicLit, not CallExpr → hits line 136-138
+	_ = 42
+
+	// CallExpr Fun is Ident, not SelectorExpr → hits line 141-143
+	_ = someFunc()
+
+	// SelectorExpr X is CompositeLit, not Ident → hits line 146-148
+	client2 := Inner{}.Method()
+	_ = client2
+
+	// Second Inspect: direct call with Ident Fun → hits line 172-174
+	someFunc()
+
+	// Second Inspect: SelectorExpr X is not Ident → hits line 177-179
+	Inner{}.Method()
+}
+`)
+	actions, _, err := AnalyzeGoSDKCalls(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(actions))
+	}
+}
+
+func TestAnalyzeGoSDKCalls_WalkDirEntryError(t *testing.T) {
+	dir := t.TempDir()
+	restricted := filepath.Join(dir, "restricted")
+	if err := os.MkdirAll(restricted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeGoFile(t, restricted, "main.go", `package main
+
+import (
+	"context"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+func main() {
+	ctx := context.TODO()
+	cfg := struct{}{}
+	client := s3.NewFromConfig(cfg)
+	client.GetObject(ctx, nil)
+}
+`)
+	if err := os.Chmod(restricted, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(restricted, 0o755)
+
+	_, _, err := AnalyzeGoSDKCalls(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
 }

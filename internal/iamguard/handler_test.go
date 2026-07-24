@@ -1,11 +1,14 @@
 package iamguard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -220,6 +223,59 @@ func TestHandle_NonexistentDirectory(t *testing.T) {
 	}
 }
 
+func TestHandle_InvalidParamsWrapsValidationError(t *testing.T) {
+	handler := NewIAMGuardHandler(nil)
+	_, err := handler.Handle(context.Background(), json.RawMessage(`{invalid json}`))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var valErr *rpc.ValidationError
+	if !errors.As(err, &valErr) {
+		t.Fatal("expected error to wrap *rpc.ValidationError")
+	}
+}
+
+func TestHandle_PathIsFileNotDirectory(t *testing.T) {
+	handler := NewIAMGuardHandler(nil)
+	filePath := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(filePath, []byte("not a dir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	input := IAMGuardInput{DirectoryPath: filePath}
+	params, _ := json.Marshal(input)
+
+	_, err := handler.Handle(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for file path (not a directory)")
+	}
+	var valErr *rpc.ValidationError
+	if !errors.As(err, &valErr) {
+		t.Fatal("expected error to wrap *rpc.ValidationError")
+	}
+}
+
+func TestHandle_StatPermissionError(t *testing.T) {
+	handler := NewIAMGuardHandler(nil)
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, "sub")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o755)
+
+	input := IAMGuardInput{DirectoryPath: subdir}
+	params, _ := json.Marshal(input)
+
+	_, err := handler.Handle(context.Background(), params)
+	if err == nil {
+		t.Fatal("expected error for permission-denied path")
+	}
+}
+
 func TestHandle_AsyncPolicyNotification(t *testing.T) {
 	dir := t.TempDir()
 	writeSDKFixture(t, dir)
@@ -303,6 +359,57 @@ func TestHandle_AsyncPolicyErrorGraceful(t *testing.T) {
 	}
 }
 
+type lockedBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuf) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuf) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestStartMetricsReporter_EmitsOnInterval(t *testing.T) {
+	var lb lockedBuf
+	handler := NewIAMGuardHandler(nil)
+	handler.logger = slog.New(slog.NewTextHandler(&lb, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go handler.StartMetricsReporter(ctx, 20*time.Millisecond)
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	if !strings.Contains(lb.String(), "metrics_report") {
+		t.Error("expected metrics_report event in log output")
+	}
+}
+
+func TestStartMetricsReporter_IntervalZero(t *testing.T) {
+	var lb lockedBuf
+	handler := NewIAMGuardHandler(nil)
+	handler.logger = slog.New(slog.NewTextHandler(&lb, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go handler.StartMetricsReporter(ctx, 0)
+
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+
+	if !strings.Contains(lb.String(), "metrics_report") {
+		t.Error("expected metrics_report on cancel even with interval=0")
+	}
+}
+
 func TestHandle_NoNotifierNoEnrichment(t *testing.T) {
 	dir := t.TempDir()
 	writeSDKFixture(t, dir)
@@ -362,6 +469,104 @@ func TestHandle_NoSessionIDNoEnrichment(t *testing.T) {
 	}
 }
 
+func TestStartBackgroundPolicyGen_NilResponse(t *testing.T) {
+	h := NewIAMGuardHandler(&mockLLMBackend{response: nil})
+	notifier := &mockNotifier{}
+	h.SetNotifier(notifier)
+
+	h.startBackgroundPolicyGen("sess-1", "req-1",
+		[]AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}, nil)
+	h.waitBackground()
+
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 notifications on nil response, got %d", notifier.count())
+	}
+}
+
+func TestStartBackgroundPolicyGen_EmptyText(t *testing.T) {
+	h := NewIAMGuardHandler(&mockLLMBackend{
+		response: &llm.LLMResponse{Text: ""},
+	})
+	notifier := &mockNotifier{}
+	h.SetNotifier(notifier)
+
+	h.startBackgroundPolicyGen("sess-1", "req-1",
+		[]AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}, nil)
+	h.waitBackground()
+
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 notifications on empty text, got %d", notifier.count())
+	}
+}
+
+func TestStartBackgroundPolicyGen_ShutdownDuringSemaphore(t *testing.T) {
+	h := NewIAMGuardHandler(&mockLLMBackend{
+		response: &llm.LLMResponse{Text: `{"iam_policy_json":"{}","aws_actions":"s3:GetObject"}`},
+	})
+	notifier := &mockNotifier{}
+	h.SetNotifier(notifier)
+
+	for i := 0; i < h.maxConcurrent; i++ {
+		h.globalSem <- struct{}{}
+	}
+
+	h.startBackgroundPolicyGen("sess-1", "req-1",
+		[]AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}, nil)
+	h.baseCancel()
+	h.waitBackground()
+
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 notifications on shutdown during semaphore, got %d", notifier.count())
+	}
+}
+
+type errNotifier struct{}
+
+func (e *errNotifier) Send(_ context.Context, _ *rpc.Response) error {
+	return errors.New("send failed")
+}
+
+func TestStartBackgroundPolicyGen_LLMDeadlineExceeded(t *testing.T) {
+	h := NewIAMGuardHandler(&mockLLMBackend{err: context.DeadlineExceeded})
+	notifier := &mockNotifier{}
+	h.SetNotifier(notifier)
+
+	h.startBackgroundPolicyGen("sess-1", "req-1",
+		[]AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}, nil)
+	h.waitBackground()
+
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 notifications on DeadlineExceeded, got %d", notifier.count())
+	}
+}
+
+func TestStartBackgroundPolicyGen_ParseError(t *testing.T) {
+	h := NewIAMGuardHandler(&mockLLMBackend{
+		response: &llm.LLMResponse{Text: `not valid json at all`},
+	})
+	notifier := &mockNotifier{}
+	h.SetNotifier(notifier)
+
+	h.startBackgroundPolicyGen("sess-1", "req-1",
+		[]AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}, nil)
+	h.waitBackground()
+
+	if notifier.count() != 0 {
+		t.Errorf("expected 0 notifications on parse error, got %d", notifier.count())
+	}
+}
+
+func TestStartBackgroundPolicyGen_EmitPolicyError(t *testing.T) {
+	h := NewIAMGuardHandler(&mockLLMBackend{
+		response: &llm.LLMResponse{Text: `{"iam_policy_json":"{\"Version\":\"2012-10-17\"}","aws_actions":"s3:GetObject"}`},
+	})
+	h.SetNotifier(&errNotifier{})
+
+	h.startBackgroundPolicyGen("sess-1", "req-1",
+		[]AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}, nil)
+	h.waitBackground()
+}
+
 func TestRegisterIAMGuard(t *testing.T) {
 	d := rpc.NewDispatcher()
 	handler := NewIAMGuardHandler(nil)
@@ -401,6 +606,63 @@ func TestNewRequestID_Format(t *testing.T) {
 	}
 }
 
+func TestBuildPrompt_WithActions(t *testing.T) {
+	actions := []AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 2}}
+	prompt := buildPrompt(actions, nil)
+	if !strings.Contains(prompt.User, "s3:GetObject") {
+		t.Error("prompt should include action details")
+	}
+	if !strings.Contains(prompt.User, "count: 2") {
+		t.Error("prompt should include action count")
+	}
+	if !strings.Contains(prompt.System, "iam_policy_json") {
+		t.Error("system prompt should request JSON output")
+	}
+}
+
+func TestBuildPrompt_WithWildcards(t *testing.T) {
+	actions := []AWSAction{{Service: "s3", Action: "s3:GetObject", Count: 1}}
+	wildcards := []IACWildcard{{
+		FilePath: "policy.json", LineNumber: 3,
+		Statement: `"Action": "*"`, Risk: "critical",
+	}}
+	prompt := buildPrompt(actions, wildcards)
+	if !strings.Contains(prompt.User, "policy.json") {
+		t.Error("prompt should include wildcard file path")
+	}
+	if !strings.Contains(prompt.User, "Wildcard") {
+		t.Error("prompt should mention wildcards section")
+	}
+}
+
+func TestParsePolicyResponse_Valid(t *testing.T) {
+	text := `{"iam_policy_json":"{\"Version\":\"2012-10-17\"}","aws_actions":"s3:GetObject"}`
+	policyJSON, awsActions, err := parsePolicyResponse(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policyJSON == "" {
+		t.Error("expected non-empty policy JSON")
+	}
+	if awsActions != "s3:GetObject" {
+		t.Errorf("aws_actions = %q, want %q", awsActions, "s3:GetObject")
+	}
+}
+
+func TestParsePolicyResponse_InvalidJSON(t *testing.T) {
+	_, _, err := parsePolicyResponse("{invalid}")
+	if err == nil {
+		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestParsePolicyResponse_Empty(t *testing.T) {
+	_, _, err := parsePolicyResponse(`{"iam_policy_json":"","aws_actions":""}`)
+	if err == nil {
+		t.Fatal("expected error for empty iam_policy_json")
+	}
+}
+
 func TestNewIAMGuardHandler_DefaultValues(t *testing.T) {
 	h := NewIAMGuardHandler(nil)
 	if h.enrichTimeout != 5*time.Second {
@@ -432,6 +694,20 @@ func TestNewIAMGuardHandler_WithMaxConcurrent(t *testing.T) {
 	h := NewIAMGuardHandler(nil, WithMaxConcurrent(10))
 	if h.maxConcurrent != 10 {
 		t.Errorf("maxConcurrent = %d, want 10", h.maxConcurrent)
+	}
+}
+
+func TestNewIAMGuardHandler_WithMaxFileSize(t *testing.T) {
+	h := NewIAMGuardHandler(nil, WithMaxFileSize(999))
+	if h.maxFileSize != 999 {
+		t.Errorf("maxFileSize = %d, want 999", h.maxFileSize)
+	}
+}
+
+func TestNewIAMGuardHandler_WithMaxFileSizeZero(t *testing.T) {
+	h := NewIAMGuardHandler(nil, WithMaxFileSize(0))
+	if h.maxFileSize != defaultMaxIACFileSize {
+		t.Errorf("maxFileSize = %d, want default %d", h.maxFileSize, defaultMaxIACFileSize)
 	}
 }
 
@@ -484,5 +760,48 @@ func TestShutdown_DrainsInflight(t *testing.T) {
 		// ok
 	case <-time.After(time.Second):
 		t.Fatal("Shutdown did not drain inflight in time")
+	}
+}
+
+func TestShutdown_CancelsBaseCtx(t *testing.T) {
+	handler := NewIAMGuardHandler(nil)
+	handler.inflight.Add(1)
+
+	done := make(chan struct{})
+	go func() {
+		handler.Shutdown(context.Background())
+		close(done)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	handler.inflight.Done()
+	<-done
+
+	if handler.baseCtx.Err() == nil {
+		t.Error("baseCtx should be cancelled after Shutdown")
+	}
+}
+
+func TestShutdown_TimeoutExpires(t *testing.T) {
+	handler := NewIAMGuardHandler(nil)
+	handler.inflight.Add(1)
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+	defer cancel()
+
+	errCh := make(chan error)
+	go func() {
+		errCh <- handler.Shutdown(ctx)
+	}()
+
+	<-ctx.Done()
+	handler.inflight.Done()
+
+	err := <-errCh
+	if err == nil {
+		t.Error("expected error on context timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected DeadlineExceeded, got %v", err)
 	}
 }

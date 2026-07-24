@@ -176,6 +176,37 @@ func TestScanIACForWildcards_EmptyDirectory(t *testing.T) {
 	}
 }
 
+func TestScanIACForWildcards_NonexistentDir(t *testing.T) {
+	wildcards, err := ScanIACForWildcards("/nonexistent/path/that/does/not/exist", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wildcards) != 0 {
+		t.Errorf("expected 0 wildcards for nonexistent dir, got %d", len(wildcards))
+	}
+}
+
+func TestScanIACForWildcards_WalkDirError(t *testing.T) {
+	dir := t.TempDir()
+	restricted := filepath.Join(dir, "restricted")
+	if err := os.MkdirAll(restricted, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(restricted, "policy.json"), `{"Action": "*"}`)
+	if err := os.Chmod(restricted, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(restricted, 0o755)
+
+	wildcards, err := ScanIACForWildcards(dir, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wildcards) != 0 {
+		t.Errorf("expected 0 wildcards for inaccessible dir, got %d", len(wildcards))
+	}
+}
+
 func TestScanIACForWildcards_SkipsNodeModules(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "node_modules", "somepkg", "policy.json"), `{"Action": "*"}`)
