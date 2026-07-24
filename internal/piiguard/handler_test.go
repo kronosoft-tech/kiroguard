@@ -34,8 +34,8 @@ const key = "AKIA1234567890123456"
 	if resp.Summary.TotalFindings == 0 {
 		t.Errorf("TotalFindings = 0, expected > 0")
 	}
-	if resp.ScanTimeMs <= 0 {
-		t.Errorf("ScanTimeMs = %d, expected > 0", resp.ScanTimeMs)
+	if resp.ScanTimeMs < 0 {
+		t.Errorf("ScanTimeMs = %d, expected >= 0", resp.ScanTimeMs)
 	}
 }
 

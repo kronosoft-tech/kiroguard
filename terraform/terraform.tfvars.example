@@ -1,0 +1,6 @@
+container_image  = "luiferdev/kiroguard:latest"
+certificate_arn  = "arn:aws:acm:us-east-1:123456789012:certificate/xxxx-xxxx-xxxx-xxxx"
+fargate_cpu      = 512
+fargate_memory   = 1024
+desired_count    = 2
+log_retention_days = 30

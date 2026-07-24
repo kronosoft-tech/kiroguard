@@ -11,20 +11,79 @@ import (
 type Dependency struct {
 	Name      string `json:"name"`
 	Version   string `json:"version"`
-	Ecosystem string `json:"ecosystem"` // "npm" or "pypi"
+	Ecosystem string `json:"ecosystem"` // "npm", "pypi", or "go"
 }
 
 // ParseManifest parses a package manifest and returns the list of dependencies.
-// Supported ecosystems: "npm" (package.json, package-lock.json) and "pip" (requirements.txt).
+// Supported ecosystems: "npm" (package.json, package-lock.json), "pip" (requirements.txt),
+// and "go" (go.mod).
 func ParseManifest(content string, ecosystem string) ([]Dependency, error) {
 	switch ecosystem {
 	case "npm":
 		return parseNPM(content)
 	case "pip":
 		return parsePip(content)
+	case "go":
+		return parseGoMod(content)
 	default:
 		return nil, fmt.Errorf("unsupported ecosystem: %q", ecosystem)
 	}
+}
+
+// parseGoMod scans a go.mod file for require directives and returns the
+// listed module dependencies with their versions.
+func parseGoMod(content string) ([]Dependency, error) {
+	var deps []Dependency
+	lines := strings.Split(content, "\n")
+	inBlock := false
+
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+
+		// Skip blank lines and comments
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+
+		if strings.HasPrefix(line, "require (") {
+			inBlock = true
+			continue
+		}
+		if inBlock {
+			if line == ")" {
+				inBlock = false
+				continue
+			}
+			// Block require: "module/path v1.2.3"
+			parts := strings.Fields(line)
+			if len(parts) >= 2 && !strings.Contains(parts[0], "//") {
+				name := parts[0]
+				ver := parts[1]
+				// Strip trailing comment (// indirect)
+				if idx := strings.Index(ver, "//"); idx != -1 {
+					ver = strings.TrimSpace(ver[:idx])
+				}
+				deps = append(deps, Dependency{Name: name, Version: ver, Ecosystem: "go"})
+			}
+			continue
+		}
+
+		// Single-line require: require module/path v1.2.3
+		if strings.HasPrefix(line, "require ") {
+			rest := strings.TrimSpace(strings.TrimPrefix(line, "require "))
+			parts := strings.Fields(rest)
+			if len(parts) >= 2 {
+				name := parts[0]
+				ver := parts[1]
+				if idx := strings.Index(ver, "//"); idx != -1 {
+					ver = strings.TrimSpace(ver[:idx])
+				}
+				deps = append(deps, Dependency{Name: name, Version: ver, Ecosystem: "go"})
+			}
+		}
+	}
+
+	return deps, nil
 }
 
 // parseNPM handles package.json and package-lock.json formats.

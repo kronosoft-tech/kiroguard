@@ -469,3 +469,107 @@ func TestParsePip_OperatorOnlyLine(t *testing.T) {
 		t.Errorf("dep = %+v, want flask@2.0.0", deps[0])
 	}
 }
+
+func TestParseManifest_GoMod_BlockRequire(t *testing.T) {
+	content := `module example.com/myapp
+
+go 1.21
+
+require (
+	github.com/gin-gonic/gin v1.9.1
+	github.com/go-sql-driver/mysql v1.7.1
+)
+
+require github.com/google/uuid v1.4.0
+`
+
+	deps, err := ParseManifest(content, "go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 3 {
+		t.Fatalf("expected 3 dependencies, got %d: %+v", len(deps), deps)
+	}
+
+	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
+
+	expected := []Dependency{
+		{Name: "github.com/gin-gonic/gin", Version: "v1.9.1", Ecosystem: "go"},
+		{Name: "github.com/go-sql-driver/mysql", Version: "v1.7.1", Ecosystem: "go"},
+		{Name: "github.com/google/uuid", Version: "v1.4.0", Ecosystem: "go"},
+	}
+
+	for i, dep := range deps {
+		if dep.Name != expected[i].Name {
+			t.Errorf("dep[%d].Name = %q, want %q", i, dep.Name, expected[i].Name)
+		}
+		if dep.Version != expected[i].Version {
+			t.Errorf("dep[%d].Version = %q, want %q", i, dep.Version, expected[i].Version)
+		}
+		if dep.Ecosystem != expected[i].Ecosystem {
+			t.Errorf("dep[%d].Ecosystem = %q, want %q", i, dep.Ecosystem, expected[i].Ecosystem)
+		}
+	}
+}
+
+func TestParseManifest_GoMod_IndirectComments(t *testing.T) {
+	content := `module example.com/myapp
+
+go 1.21
+
+require (
+	github.com/gin-gonic/gin v1.9.1
+	github.com/mattn/go-isatty v0.0.20 // indirect
+)
+`
+
+	deps, err := ParseManifest(content, "go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 2 {
+		t.Fatalf("expected 2 dependencies, got %d: %+v", len(deps), deps)
+	}
+}
+
+func TestParseManifest_GoMod_EmptyManifest(t *testing.T) {
+	content := `module example.com/myapp
+
+go 1.21
+`
+
+	deps, err := ParseManifest(content, "go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Errorf("expected 0 dependencies, got %d", len(deps))
+	}
+}
+
+func TestParseManifest_GoMod_CommentsAndBlankLines(t *testing.T) {
+	content := `module example.com/myapp
+
+go 1.21
+
+// This is a comment
+require github.com/gin-gonic/gin v1.9.1
+
+require (
+	// Another comment
+	github.com/go-sql-driver/mysql v1.7.1
+)
+
+require (
+	github.com/google/uuid v1.4.0
+)
+`
+
+	deps, err := ParseManifest(content, "go")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 3 {
+		t.Fatalf("expected 3 dependencies, got %d: %+v", len(deps), deps)
+	}
+}

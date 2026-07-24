@@ -7,6 +7,9 @@ import (
 	"github.com/luiferdev/kiroguard/internal/rpc"
 )
 
+// MetricsSnapshotter returns a point-in-time snapshot of operational counters.
+type MetricsSnapshotter func() map[string]interface{}
+
 // MessageHandler is a function that processes an incoming JSON-RPC request
 // and returns a response or an error.
 type MessageHandler func(ctx context.Context, req *rpc.Request) (*rpc.Response, error)

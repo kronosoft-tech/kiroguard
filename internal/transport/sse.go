@@ -48,8 +48,15 @@ type SSETransport struct {
 	// without restarting the server or locking the request path.
 	authTokens atomic.Pointer[[]string]
 
+	// ready marks the server as ready for /healthz liveness/readiness probes.
+	ready atomic.Bool
+
+	// metricsSnapshotters collects registered metric providers for the /metrics endpoint.
+	muMetrics sync.Mutex
+	snapshotters []MetricsSnapshotter
+
 	mu      sync.Mutex
-	clients map[string]*sseClient // keyed by session id
+	clients map[string]*sseClient
 }
 
 // NewSSETransport creates a new SSE transport listening on the given address (e.g., ":3000").
@@ -68,6 +75,19 @@ func (s *SSETransport) SetAuthToken(token string) {
 		return
 	}
 	s.SetAuthTokens([]string{token})
+}
+
+// SetReady marks the server as ready (true) or not (false) for /healthz probes.
+func (s *SSETransport) SetReady(v bool) {
+	s.ready.Store(v)
+}
+
+// RegisterMetricsSnapshotter registers a provider whose key-value pairs are
+// included in the /metrics endpoint response. Safe to call before Start.
+func (s *SSETransport) RegisterMetricsSnapshotter(snapper MetricsSnapshotter) {
+	s.muMetrics.Lock()
+	defer s.muMetrics.Unlock()
+	s.snapshotters = append(s.snapshotters, snapper)
 }
 
 // SetAuthTokens replaces the set of accepted bearer tokens atomically. Safe to
@@ -115,6 +135,8 @@ func (s *SSETransport) Start(ctx context.Context, handler MessageHandler) error 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/message", s.handleMessage)
 	mux.HandleFunc("/sse", s.handleSSE)
+	mux.HandleFunc("/healthz", s.handleHealthz)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 
 	server := &http.Server{
 		Handler: mux,
@@ -310,6 +332,40 @@ func (s *SSETransport) removeClient(c *sseClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.clients, c.id)
+}
+
+// handleHealthz serves GET /healthz for liveness and readiness probes. Returns
+// 200 when the server is ready, 503 otherwise.
+func (s *SSETransport) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.ready.Load() {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(map[string]string{"status": "starting"})
+	}
+}
+
+// handleMetrics serves GET /metrics returning a combined JSON snapshot of all
+// registered module-level operational counters.
+func (s *SSETransport) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	s.muMetrics.Lock()
+	copy := make([]MetricsSnapshotter, len(s.snapshotters))
+	for i, sn := range s.snapshotters {
+		copy[i] = sn
+	}
+	s.muMetrics.Unlock()
+
+	merged := make(map[string]interface{})
+	for _, sn := range copy {
+		for k, v := range sn() {
+			merged[k] = v
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(merged)
 }
 
 // writeJSONError writes a JSON-RPC error response to the HTTP response writer.

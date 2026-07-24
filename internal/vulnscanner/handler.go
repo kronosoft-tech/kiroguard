@@ -64,7 +64,7 @@ type VulnFinding struct {
 // VulnScannerInput represents the input parameters for the vulnscanner/scan tool.
 type VulnScannerInput struct {
 	Manifest  string `json:"manifest"`
-	Ecosystem string `json:"ecosystem"` // "npm" | "pip"
+	Ecosystem string `json:"ecosystem"` // "npm" | "pip" | "go"
 }
 
 // VulnScannerOutput represents the output of the vulnscanner/scan tool.

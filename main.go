@@ -166,12 +166,13 @@ func main() {
 
 	// --- Create the transport ---
 	var t transport.Transport
+	var sseT *transport.SSETransport // non-nil only in SSE mode
 	switch cfg.Transport.Type {
 	case "stdio":
 		t = transport.NewStdioTransport(os.Stdin, os.Stdout)
 	case "sse":
 		addr := fmt.Sprintf(":%d", cfg.Transport.Port)
-		sseT := transport.NewSSETransport(addr)
+		sseT = transport.NewSSETransport(addr)
 		authTokens := cfg.Transport.AuthTokens
 		if cfg.Transport.AuthToken != "" {
 			authTokens = append(authTokens, cfg.Transport.AuthToken)
@@ -180,6 +181,28 @@ func main() {
 		if len(authTokens) == 0 {
 			slog.Warn("SSE transport running WITHOUT authentication; set transport.auth_token(s) or place it behind an authenticated gateway")
 		}
+
+		// Register all module-level metrics providers for the /metrics endpoint.
+		sseT.RegisterMetricsSnapshotter(func() map[string]interface{} {
+			return map[string]interface{}{"envguard": envHandler.MetricsSnapshot()}
+		})
+		sseT.RegisterMetricsSnapshotter(func() map[string]interface{} {
+			return map[string]interface{}{"vulnscanner": vulnHandler.MetricsSnapshot()}
+		})
+		sseT.RegisterMetricsSnapshotter(func() map[string]interface{} {
+			return map[string]interface{}{"cleanarch": archHandler.MetricsSnapshot()}
+		})
+		sseT.RegisterMetricsSnapshotter(func() map[string]interface{} {
+			return map[string]interface{}{"iamguard": iamHandler.MetricsSnapshot()}
+		})
+		sseT.RegisterMetricsSnapshotter(func() map[string]interface{} {
+			return map[string]interface{}{"lambdaguard": lambdaHandler.MetricsSnapshot()}
+		})
+		sseT.RegisterMetricsSnapshotter(func() map[string]interface{} {
+			return map[string]interface{}{"piiguard": piiHandler.MetricsSnapshot()}
+		})
+
+		sseT.SetReady(true)
 		t = sseT
 	}
 
@@ -203,10 +226,10 @@ func main() {
 	// Drain in-flight Clean-Arch background enrichment before exiting so async
 	// LLM work isn't cut off mid-flight on shutdown.
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer drainCancel()
 	if derr := archHandler.Shutdown(drainCtx); derr != nil {
 		slog.Warn("clean-arch enrichment drain incomplete", "error", derr)
 	}
-	drainCancel()
 
 	// Drain in-flight Vuln-Scanner enrichment goroutines as well.
 	vulnHandler.Shutdown()
