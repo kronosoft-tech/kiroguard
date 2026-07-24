@@ -18,6 +18,7 @@ type Config struct {
 	CleanArch   CleanArchConfig   `yaml:"cleanarch"`
 	VulnScanner VulnScannerConfig `yaml:"vulnscanner"`
 	IAMGuard    IAMGuardConfig    `yaml:"iamguard"`
+	LambdaGuard LambdaGuardConfig `yaml:"lambdaguard"`
 }
 
 // VulnScannerConfig configures the Vuln-Scanner module.
@@ -66,6 +67,14 @@ type IAMGuardConfig struct {
 	MaxFileSizeMb     int `yaml:"max_file_size_mb"`    // max IaC file size, default 5
 	MaxConcurrent     int `yaml:"max_concurrent"`      // GLOBAL max concurrent LLM calls, default 3
 	MetricsIntervalMs int `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
+}
+
+// LambdaGuardConfig configures the LambdaGuard module.
+type LambdaGuardConfig struct {
+	SeverityThreshold string `yaml:"severity_threshold"` // default: "low"
+	MaxFileSizeMb     int    `yaml:"max_file_size_mb"`   // max IaC file to parse, default 5
+	ScanTimeoutMs     int    `yaml:"scan_timeout_ms"`    // full scan deadline, default 15000
+	MetricsIntervalMs int    `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
 }
 
 // CleanArchConfig configures the Clean-Arch module.
@@ -173,6 +182,25 @@ func validate(cfg *Config) error {
 	// iamguard.max_concurrent
 	if cfg.IAMGuard.MaxConcurrent < 1 {
 		errs = append(errs, "iamguard.max_concurrent: must be greater than 0")
+	}
+
+	// lambdaguard.severity_threshold
+	if cfg.LambdaGuard.SeverityThreshold != "" {
+		switch cfg.LambdaGuard.SeverityThreshold {
+		case "low", "medium", "high", "critical":
+		default:
+			errs = append(errs, "lambdaguard.severity_threshold: must be one of: low, medium, high, critical")
+		}
+	}
+
+	// lambdaguard.max_file_size_mb
+	if cfg.LambdaGuard.MaxFileSizeMb < 1 {
+		errs = append(errs, "lambdaguard.max_file_size_mb: must be greater than 0")
+	}
+
+	// lambdaguard.scan_timeout_ms
+	if cfg.LambdaGuard.ScanTimeoutMs < 1 {
+		errs = append(errs, "lambdaguard.scan_timeout_ms: must be greater than 0")
 	}
 
 	if len(errs) > 0 {
