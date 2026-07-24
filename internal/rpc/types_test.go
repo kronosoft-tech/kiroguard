@@ -161,6 +161,63 @@ func TestNewResponse_NilID(t *testing.T) {
 	}
 }
 
+func TestErrParseError(t *testing.T) {
+	id := json.RawMessage(`1`)
+	resp := ErrParseError(&id, "bad token")
+	if resp.Error.Code != CodeParseError {
+		t.Errorf("code = %d, want %d", resp.Error.Code, CodeParseError)
+	}
+	if resp.Error.Message != "Parse error: bad token" {
+		t.Errorf("message = %q", resp.Error.Message)
+	}
+
+	resp = ErrParseError(nil, "")
+	if resp.Error.Message != "Parse error" {
+		t.Errorf("message = %q", resp.Error.Message)
+	}
+	if resp.ID != nil {
+		t.Error("expected nil ID")
+	}
+}
+
+func TestErrInvalidRequest(t *testing.T) {
+	id := json.RawMessage(`1`)
+	resp := ErrInvalidRequest(&id, "missing field")
+	if resp.Error.Code != CodeInvalidRequest {
+		t.Errorf("code = %d, want %d", resp.Error.Code, CodeInvalidRequest)
+	}
+	if resp.Error.Message != "Invalid Request: missing field" {
+		t.Errorf("message = %q", resp.Error.Message)
+	}
+
+	resp = ErrInvalidRequest(nil, "")
+	if resp.Error.Message != "Invalid Request" {
+		t.Errorf("message = %q", resp.Error.Message)
+	}
+}
+
+func TestNewResponse_MarshalError(t *testing.T) {
+	id := json.RawMessage(`1`)
+	// An unbuffered channel cannot be marshaled to JSON
+	resp := NewResponse(&id, make(chan int))
+	if resp.Error == nil {
+		t.Fatal("expected error response when marshal fails")
+	}
+	if resp.Error.Code != CodeInternalError {
+		t.Errorf("code = %d, want %d", resp.Error.Code, CodeInternalError)
+	}
+}
+
+func TestRPCError_Error(t *testing.T) {
+	err := NewRPCError(CodeInvalidParams, "bad params")
+	if err.Error() != "bad params" {
+		t.Errorf("Error() = %q, want %q", err.Error(), "bad params")
+	}
+	if err.Code != CodeInvalidParams {
+		t.Errorf("Code = %d, want %d", err.Code, CodeInvalidParams)
+	}
+}
+
 func TestRoundTrip_Request(t *testing.T) {
 	original := `{"jsonrpc":"2.0","id":42,"method":"envguard/scan","params":{"diff":"hello"}}`
 	req, err := ParseRequest([]byte(original))
