@@ -30,8 +30,8 @@ type VulnScannerConfig struct {
 
 // TransportConfig configures the communication transport.
 type TransportConfig struct {
-	Type      string `yaml:"type"`       // "stdio" | "sse"
-	Port      int    `yaml:"port"`       // default: 3000
+	Type       string   `yaml:"type"`        // "stdio" | "sse"
+	Port       int      `yaml:"port"`        // default: 3000
 	AuthToken  string   `yaml:"auth_token"`  // optional: single bearer token required on SSE endpoints (empty = open)
 	AuthTokens []string `yaml:"auth_tokens"` // optional: multiple accepted tokens (enables rotation); merged with auth_token
 }
@@ -45,13 +45,13 @@ type LLMConfig struct {
 
 // EnvGuardConfig configures the Env-Guard secrets module.
 type EnvGuardConfig struct {
-	IgnoreFile      string  `yaml:"ignore_file"`      // default: ".envguardignore"
-	MigrationTarget string  `yaml:"migration_target"` // "secrets_manager" | "ssm"
-	SSMPrefix       string  `yaml:"ssm_prefix"`       // default: "/kiroguard/"
-	WorkerCount      int     `yaml:"worker_count"`        // max concurrent migration workers (default: 5)
-	RateLimit        float64 `yaml:"rate_limit"`          // AWS API calls per second (default: 10.0)
-	RateBurst        int     `yaml:"rate_burst"`          // burst size for rate limiter (default: 5)
-	MetricsIntervalMs int    `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
+	IgnoreFile        string  `yaml:"ignore_file"`         // default: ".envguardignore"
+	MigrationTarget   string  `yaml:"migration_target"`    // "secrets_manager" | "ssm"
+	SSMPrefix         string  `yaml:"ssm_prefix"`          // default: "/kiroguard/"
+	WorkerCount       int     `yaml:"worker_count"`        // max concurrent migration workers (default: 5)
+	RateLimit         float64 `yaml:"rate_limit"`          // AWS API calls per second (default: 10.0)
+	RateBurst         int     `yaml:"rate_burst"`          // burst size for rate limiter (default: 5)
+	MetricsIntervalMs int     `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
 }
 
 // FinOpsConfig configures the FinOps Guardrail module.
@@ -61,21 +61,21 @@ type FinOpsConfig struct {
 
 // IAMGuardConfig configures the IAM-Guard module.
 type IAMGuardConfig struct {
-	EnrichTimeoutMs   int `yaml:"enrich_timeout_ms"`    // per-LLM-call deadline, default 5000
-	ScanTimeoutMs     int `yaml:"scan_timeout_ms"`      // AST + IaC scan deadline, default 10000
-	MaxFileSizeMb     int `yaml:"max_file_size_mb"`     // max IaC file size, default 5
-	MaxConcurrent     int `yaml:"max_concurrent"`        // GLOBAL max concurrent LLM calls, default 3
-	MetricsIntervalMs int `yaml:"metrics_interval_ms"`  // periodic metrics report cadence, default 60000
+	EnrichTimeoutMs   int `yaml:"enrich_timeout_ms"`   // per-LLM-call deadline, default 5000
+	ScanTimeoutMs     int `yaml:"scan_timeout_ms"`     // AST + IaC scan deadline, default 10000
+	MaxFileSizeMb     int `yaml:"max_file_size_mb"`    // max IaC file size, default 5
+	MaxConcurrent     int `yaml:"max_concurrent"`      // GLOBAL max concurrent LLM calls, default 3
+	MetricsIntervalMs int `yaml:"metrics_interval_ms"` // periodic metrics report cadence, default 60000
 }
 
 // CleanArchConfig configures the Clean-Arch module.
 type CleanArchConfig struct {
-	RulesFile                string `yaml:"rules_file"`                   // default: ".cleanarch.yaml"
-	TimeoutMs                int    `yaml:"timeout_ms"`                   // AST scan deadline, default 3000
-	EnrichTimeoutMs          int    `yaml:"enrich_timeout_ms"`            // per-LLM-call deadline, default 1500
-	MaxConcurrent            int    `yaml:"max_concurrent"`               // GLOBAL max concurrent LLM calls, default 5
-	MaxEnrichmentsPerRequest int    `yaml:"max_enrichments_per_request"`  // per-request enrichment cap, default 25
-	MetricsIntervalMs        int    `yaml:"metrics_interval_ms"`          // periodic metrics report cadence, default 60000
+	RulesFile                string `yaml:"rules_file"`                  // default: ".cleanarch.yaml"
+	TimeoutMs                int    `yaml:"timeout_ms"`                  // AST scan deadline, default 3000
+	EnrichTimeoutMs          int    `yaml:"enrich_timeout_ms"`           // per-LLM-call deadline, default 1500
+	MaxConcurrent            int    `yaml:"max_concurrent"`              // GLOBAL max concurrent LLM calls, default 5
+	MaxEnrichmentsPerRequest int    `yaml:"max_enrichments_per_request"` // per-request enrichment cap, default 25
+	MetricsIntervalMs        int    `yaml:"metrics_interval_ms"`         // periodic metrics report cadence, default 60000
 }
 
 // Load reads a YAML configuration file from the given path and returns a

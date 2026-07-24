@@ -1,19 +1,3 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Package cleanarch implements AI-powered architecture linting using AST analysis.
 package cleanarch
 

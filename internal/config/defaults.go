@@ -13,9 +13,9 @@ func Default() *Config {
 			Region:   "us-east-1",
 		},
 		EnvGuard: EnvGuardConfig{
-			IgnoreFile:      ".envguardignore",
-			MigrationTarget: "secrets_manager",
-			SSMPrefix:       "/kiroguard/",
+			IgnoreFile:        ".envguardignore",
+			MigrationTarget:   "secrets_manager",
+			SSMPrefix:         "/kiroguard/",
 			WorkerCount:       5,
 			RateLimit:         10.0,
 			RateBurst:         5,

@@ -1,2 +1,6 @@
 # Local AI runtime state
 .atl/
+
+# Binarios locales
+kiroguard
+/tmp/

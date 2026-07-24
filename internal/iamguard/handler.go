@@ -20,19 +20,19 @@ import (
 )
 
 const (
-	defaultEnrichTimeout             = 5 * time.Second
-	defaultScanTimeout               = 10 * time.Second
-	defaultMaxConcurrent             = 3
-	defaultMetricsInterval           = 60 * time.Second
+	defaultEnrichTimeout   = 5 * time.Second
+	defaultScanTimeout     = 10 * time.Second
+	defaultMaxConcurrent   = 3
+	defaultMetricsInterval = 60 * time.Second
 )
 
 // Metrics holds atomic counters for IAM-Guard, suitable for periodic export
 // to CloudWatch / a metrics sink.
 type Metrics struct {
-	ScansTotal      atomic.Int64
-	WildcardsTotal  atomic.Int64
-	PoliciesOK      atomic.Int64
-	PoliciesFailed  atomic.Int64
+	ScansTotal     atomic.Int64
+	WildcardsTotal atomic.Int64
+	PoliciesOK     atomic.Int64
+	PoliciesFailed atomic.Int64
 }
 
 // MetricsSnapshot is an immutable point-in-time copy of the counters.
