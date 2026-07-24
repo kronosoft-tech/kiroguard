@@ -65,7 +65,9 @@ func main() {
 	// Try to create the Bedrock provider (non-fatal if it fails).
 	bedrockProvider, err := llm.NewBedrockProvider(ctx, cfg.LLM.Region, cfg.LLM.ModelID)
 	if err == nil {
-		rawBackend = llm.NewLLMRouter(bedrockProvider, heuristic)
+		// Circuit Breaker: 3 consecutive AWS Bedrock failures opens circuit for 30s, failing fast in 0ms to heuristic
+		cbLLM := llm.NewCircuitBreakerLLM(bedrockProvider, heuristic, 3, 30*time.Second)
+		rawBackend = cbLLM
 	} else {
 		slog.Warn("Bedrock unavailable, using heuristic fallback", "error", err)
 	}
