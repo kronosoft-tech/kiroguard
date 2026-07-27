@@ -398,3 +398,398 @@ func createFunc(client *lambda.Client) {
 		}
 	}
 }
+
+// ============================================================================
+// JavaScript/TypeScript Tests
+// ============================================================================
+
+func TestDetectJSN1QueryInForEach(t *testing.T) {
+	source := `import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
+
+async function getUsers(ids: number[]) {
+  for (const id of ids) {
+    await prisma.user.findUnique({ where: { id } });
+  }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJS(source, "users.ts")
+
+	if len(patterns) == 0 {
+		t.Fatal("expected at least one pattern detected for N+1 query in forEach")
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternN1Query {
+			found = true
+			if p.FilePath != "users.ts" {
+				t.Errorf("expected file_path 'users.ts', got '%s'", p.FilePath)
+			}
+			if p.LineNumber <= 0 {
+				t.Errorf("expected positive line number, got %d", p.LineNumber)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected PatternN1Query to be detected")
+	}
+}
+
+func TestDetectJSDynamoDBScanWithoutLimit(t *testing.T) {
+	source := `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+
+const client = new DynamoDBClient({});
+
+async function scanAllItems() {
+  const result = await client.send(new ScanCommand({
+    TableName: 'Users'
+  }));
+  return result.Items;
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJS(source, "dynamodb.ts")
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternUnpaginatedScan {
+			found = true
+			if p.FilePath != "dynamodb.ts" {
+				t.Errorf("expected file_path 'dynamodb.ts', got '%s'", p.FilePath)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected PatternUnpaginatedScan to be detected")
+	}
+}
+
+func TestDetectJSDynamoDBScanWithLimit(t *testing.T) {
+	source := `import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+
+const client = new DynamoDBClient({});
+
+async function scanAllItems() {
+  const result = await client.send(new ScanCommand({
+    TableName: 'Users',
+    Limit: 100
+  }));
+  return result.Items;
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJS(source, "dynamodb.ts")
+
+	for _, p := range patterns {
+		if p.PatternType == PatternUnpaginatedScan {
+			t.Error("should NOT detect unpaginated scan when Limit is present")
+		}
+	}
+}
+
+func TestDetectJSN1WithSequelize(t *testing.T) {
+	source := `import { User } from './models';
+
+async function getUserDetails(ids: number[]) {
+  for (const id of ids) {
+    await User.findByPk(id);
+  }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJS(source, "sequelize.js")
+
+	if len(patterns) == 0 {
+		t.Fatal("expected at least one pattern detected for Sequelize N+1 query")
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternN1Query {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected PatternN1Query to be detected")
+	}
+}
+
+func TestDetectJSCleanCodeNoPatterns(t *testing.T) {
+	source := `import { UserService } from './services';
+
+async function getUser(id: number) {
+  const service = new UserService();
+  return await service.findById(id);
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJS(source, "clean.ts")
+
+	if len(patterns) != 0 {
+		t.Errorf("expected no patterns in clean code, got %d", len(patterns))
+	}
+}
+
+// ============================================================================
+// Python Tests
+// ============================================================================
+
+func TestDetectPythonN1QueryInLoop(t *testing.T) {
+	source := `from sqlalchemy.orm import Session
+
+def get_users(db: Session, user_ids: list):
+    for user_id in user_ids:
+        user = db.query(User).filter(User.id == user_id).first()
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourcePython(source, "users.py")
+
+	if len(patterns) == 0 {
+		t.Fatal("expected at least one pattern detected for N+1 query in Python loop")
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternN1Query {
+			found = true
+			if p.FilePath != "users.py" {
+				t.Errorf("expected file_path 'users.py', got '%s'", p.FilePath)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected PatternN1Query to be detected")
+	}
+}
+
+func TestDetectPythonDynamoDBScanWithoutLimit(t *testing.T) {
+	source := `import boto3
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('Users')
+
+def scan_all():
+    response = table.scan()
+    return response['Items']
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourcePython(source, "dynamodb.py")
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternUnpaginatedScan {
+			found = true
+			if p.FilePath != "dynamodb.py" {
+				t.Errorf("expected file_path 'dynamodb.py', got '%s'", p.FilePath)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected PatternUnpaginatedScan to be detected")
+	}
+}
+
+func TestDetectPythonDynamoDBScanWithLimit(t *testing.T) {
+	source := `import boto3
+
+dynamodb = boto3.resource('dynamodb')
+table = dynamodb.Table('Users')
+
+def scan_all():
+    response = table.scan(Limit=100)
+    return response['Items']
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourcePython(source, "dynamodb.py")
+
+	for _, p := range patterns {
+		if p.PatternType == PatternUnpaginatedScan {
+			t.Error("should NOT detect unpaginated scan when Limit is present")
+		}
+	}
+}
+
+func TestDetectPythonDjangoORMN1(t *testing.T) {
+	source := `from myapp.models import Order
+
+def get_order_items(order_ids):
+    for order_id in order_ids:
+        order = Order.objects.get(id=order_id)
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourcePython(source, "django.py")
+
+	if len(patterns) == 0 {
+		t.Fatal("expected at least one pattern detected for Django ORM N+1 query")
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternN1Query {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected PatternN1Query to be detected")
+	}
+}
+
+func TestDetectPythonCleanCodeNoPatterns(t *testing.T) {
+	source := `from services import UserService
+
+def get_user(user_id):
+    service = UserService()
+    return service.find_by_id(user_id)
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourcePython(source, "clean.py")
+
+	if len(patterns) != 0 {
+		t.Errorf("expected no patterns in clean Python code, got %d", len(patterns))
+	}
+}
+
+// ============================================================================
+// Java Tests
+// ============================================================================
+
+func TestDetectJavaN1QueryInLoop(t *testing.T) {
+	source := `import java.util.List;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public class UserService {
+    public void getUsers(List<Long> ids) {
+        for (Long id : ids) {
+            User user = repository.findById(id).orElse(null);
+        }
+    }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJava(source, "UserService.java")
+
+	if len(patterns) == 0 {
+		t.Fatal("expected at least one pattern detected for N+1 query in Java loop")
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternN1Query {
+			found = true
+			if p.FilePath != "UserService.java" {
+				t.Errorf("expected file_path 'UserService.java', got '%s'", p.FilePath)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected PatternN1Query to be detected")
+	}
+}
+
+func TestDetectJavaDynamoDBScanWithoutLimit(t *testing.T) {
+	source := `import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+
+public class UserRepository {
+    public void scanAll() {
+        ScanRequest request = ScanRequest.builder()
+            .tableName("Users")
+            .build();
+        dynamoDbClient.scan(request);
+    }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJava(source, "UserRepository.java")
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternUnpaginatedScan {
+			found = true
+			if p.FilePath != "UserRepository.java" {
+				t.Errorf("expected file_path 'UserRepository.java', got '%s'", p.FilePath)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected PatternUnpaginatedScan to be detected")
+	}
+}
+
+func TestDetectJavaDynamoDBScanWithLimit(t *testing.T) {
+	source := `import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+
+public class UserRepository {
+    public void scanAll() {
+        ScanRequest request = ScanRequest.builder()
+            .tableName("Users")
+            .limit(100)
+            .build();
+        dynamoDbClient.scan(request);
+    }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJava(source, "UserRepository.java")
+
+	for _, p := range patterns {
+		if p.PatternType == PatternUnpaginatedScan {
+			t.Error("should NOT detect unpaginated scan when Limit is present")
+		}
+	}
+}
+
+func TestDetectJavaJDBCN1(t *testing.T) {
+	source := `import java.sql.*;
+
+public class UserService {
+    public void getUsers(int[] ids) throws SQLException {
+        for (int id : ids) {
+            PreparedStatement ps = connection.prepareStatement("SELECT * FROM users WHERE id = ?");
+            ps.setInt(1, id);
+            ResultSet rs = ps.executeQuery();
+        }
+    }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJava(source, "UserService.java")
+
+	if len(patterns) == 0 {
+		t.Fatal("expected at least one pattern detected for JDBC N+1 query")
+	}
+
+	found := false
+	for _, p := range patterns {
+		if p.PatternType == PatternN1Query {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected PatternN1Query to be detected")
+	}
+}
+
+func TestDetectJavaCleanCodeNoPatterns(t *testing.T) {
+	source := `import com.example.UserService;
+
+public class UserController {
+    public User getUser(Long id) {
+        UserService service = new UserService();
+        return service.findById(id);
+    }
+}
+`
+	detector := NewPatternDetector()
+	patterns := detector.DetectFromSourceJava(source, "UserController.java")
+
+	if len(patterns) != 0 {
+		t.Errorf("expected no patterns in clean Java code, got %d", len(patterns))
+	}
+}
