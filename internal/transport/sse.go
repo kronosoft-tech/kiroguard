@@ -249,6 +249,9 @@ func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Dispatch response over the SSE stream for MCP SSEClientTransport compatibility
+	_ = s.Send(ctx, resp)
+
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		// At this point headers may already be sent; log internally.
