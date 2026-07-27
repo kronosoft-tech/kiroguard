@@ -1,6 +1,8 @@
 package cleanarch
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -422,6 +424,476 @@ func TestBuildImportGraph_NonexistentDir(t *testing.T) {
 	_, _, err := BuildImportGraph("/nonexistent/path/that/does/not/exist")
 	if err == nil {
 		t.Error("expected error for nonexistent directory")
+	}
+}
+
+// ============================================================================
+// JavaScript/TypeScript Tests
+// ============================================================================
+
+func createJSFile(t *testing.T, dir, filename, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildImportGraphJS_ES6Imports(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create package "services"
+	createJSFile(t, filepath.Join(tmpDir, "services"), "user.ts", `import { UserRepository } from '../repositories/user';
+import { Logger } from '../utils/logger';
+
+export class UserService {
+  constructor(private repo: UserRepository, private logger: Logger) {}
+}
+`)
+
+	// Create package "repositories"
+	createJSFile(t, filepath.Join(tmpDir, "repositories"), "user.ts", `import { PrismaClient } from '@prisma/client';
+
+export class UserRepository {
+  constructor(private prisma: PrismaClient) {}
+}
+`)
+
+	// Create package "utils"
+	createJSFile(t, filepath.Join(tmpDir, "utils"), "logger.ts", `export class Logger {
+  log(message: string) { console.log(message); }
+}
+`)
+
+	graph, edges, err := BuildImportGraphJS(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that graph has all packages
+	packages := graphKeys(graph)
+	expectedPkgs := []string{"repositories", "services", "utils"}
+	if len(packages) != len(expectedPkgs) {
+		t.Errorf("expected %d packages, got %d: %v", len(expectedPkgs), len(packages), packages)
+	}
+
+	// Check that edges were created
+	if len(edges) == 0 {
+		t.Error("expected at least one import edge")
+	}
+
+	// Check specific imports
+	servicesImports := graph["services"]
+	if !containsString(servicesImports, "../repositories/user") {
+		t.Errorf("expected services to import ../repositories/user, got %v", servicesImports)
+	}
+	if !containsString(servicesImports, "../utils/logger") {
+		t.Errorf("expected services to import ../utils/logger, got %v", servicesImports)
+	}
+}
+
+func TestBuildImportGraphJS_RequireCalls(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	createJSFile(t, tmpDir, "index.js", `const express = require('express');
+const { User } = require('./models/user');
+const config = require('../config');
+
+const app = express();
+`)
+
+	graph, edges, err := BuildImportGraphJS(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that relative imports are captured
+	rootImports := graph["."]
+	if !containsString(rootImports, "./models/user") {
+		t.Errorf("expected root to import ./models/user, got %v", rootImports)
+	}
+	if !containsString(rootImports, "../config") {
+		t.Errorf("expected root to import ../config, got %v", rootImports)
+	}
+
+	// Check that external dependencies (express) are also captured
+	if !containsString(rootImports, "express") {
+		t.Errorf("expected root to import express, got %v", rootImports)
+	}
+
+	// Check edges - should have 3 imports (express, ./models/user, ../config)
+	if len(edges) != 3 {
+		t.Errorf("expected 3 edges, got %d", len(edges))
+	}
+}
+
+func TestBuildImportGraphJS_SkipsNodeModules(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create node_modules directory
+	createJSFile(t, filepath.Join(tmpDir, "node_modules", "lodash"), "index.js", `module.exports = {}`)
+	createJSFile(t, tmpDir, "app.ts", `import { helper } from './helper';
+export const app = helper();
+`)
+
+	graph, _, err := BuildImportGraphJS(tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should only have root package, not node_modules
+	packages := graphKeys(graph)
+	if len(packages) != 1 {
+		t.Errorf("expected 1 package (root only), got %d: %v", len(packages), packages)
+	}
+}
+
+func TestIsJSFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"app.js", true},
+		{"app.jsx", true},
+		{"app.ts", true},
+		{"app.tsx", true},
+		{"app.mjs", true},
+		{"app.cjs", true},
+		{"app.go", false},
+		{"app.py", false},
+		{"app.txt", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isJSFile(tt.name); got != tt.expected {
+				t.Errorf("isJSFile(%q) = %v, want %v", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsJSStdLibImport(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"fs", true},
+		{"path", true},
+		{"http", true},
+		{"./relative", false},
+		{"../relative", false},
+		{"express", false},
+		{"@types/node", true},
+		{"@prisma/client", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isJSStdLibImport(tt.name); got != tt.expected {
+				t.Errorf("isJSStdLibImport(%q) = %v, want %v", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestExtractJSImports(t *testing.T) {
+	source := `import { foo } from 'bar';
+import defaultExport from 'baz';
+import * as ns from 'qux';
+import 'side-effect';
+const req = require('./local');
+`
+
+	edges := extractJSImports(source, "test.ts", ".")
+
+	// Should have 4 imports (side-effect import counts)
+	expectedImports := []string{"bar", "baz", "qux", "side-effect", "./local"}
+	if len(edges) != len(expectedImports) {
+		t.Errorf("expected %d edges, got %d", len(expectedImports), len(edges))
+	}
+
+	for i, imp := range expectedImports {
+		if i < len(edges) && edges[i].ImportPath != imp {
+			t.Errorf("expected import %d to be %q, got %q", i, imp, edges[i].ImportPath)
+		}
+	}
+}
+
+// ============================================================================
+// Python Tests
+// ============================================================================
+
+func TestBuildImportGraphPython(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create Python files with imports
+	createJSFile(t, filepath.Join(tmpDir, "services"), "__init__.py", "")
+	createJSFile(t, filepath.Join(tmpDir, "services"), "user.py", `from repositories.user import UserRepository
+from utils.logger import Logger
+
+class UserService:
+    def __init__(self):
+        self.repo = UserRepository()
+        self.logger = Logger()
+`)
+
+	createJSFile(t, filepath.Join(tmpDir, "repositories"), "__init__.py", "")
+	createJSFile(t, filepath.Join(tmpDir, "repositories"), "user.py", `import sqlalchemy
+from models import User
+
+class UserRepository:
+    def __init__(self):
+        self.db = sqlalchemy.create_engine('sqlite:///db.sqlite')
+`)
+
+	createJSFile(t, filepath.Join(tmpDir, "utils"), "__init__.py", "")
+	createJSFile(t, filepath.Join(tmpDir, "utils"), "logger.py", `class Logger:
+    def log(self, message):
+        print(message)
+`)
+
+	graph, edges, err := BuildImportGraphPythonContext(context.Background(), tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that graph has packages
+	packages := graphKeys(graph)
+	if len(packages) < 2 {
+		t.Errorf("expected at least 2 packages, got %d: %v", len(packages), packages)
+	}
+
+	// Check that edges were created
+	if len(edges) == 0 {
+		t.Error("expected at least one import edge")
+	}
+
+	// Check specific imports
+	servicesImports := graph["services"]
+	if !containsString(servicesImports, "repositories.user") {
+		t.Errorf("expected services to import repositories.user, got %v", servicesImports)
+	}
+	if !containsString(servicesImports, "utils.logger") {
+		t.Errorf("expected services to import utils.logger, got %v", servicesImports)
+	}
+}
+
+func TestBuildImportGraphPython_SkipsBuiltinModules(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	createJSFile(t, tmpDir, "app.py", `import os
+import sys
+from pathlib import Path
+from models import User
+`)
+
+	_, edges, err := BuildImportGraphPythonContext(context.Background(), tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should only have models import, not os/sys/pathlib
+	for _, edge := range edges {
+		if edge.ImportPath == "os" || edge.ImportPath == "sys" || edge.ImportPath == "pathlib" {
+			t.Errorf("should not include Python stdlib import: %s", edge.ImportPath)
+		}
+	}
+
+	if len(edges) != 1 {
+		t.Errorf("expected 1 edge (models), got %d", len(edges))
+	}
+}
+
+func TestIsPythonStdLibImport(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"os", true},
+		{"sys", true},
+		{"pathlib", true},
+		{"flask", false},
+		{"django", false},
+		{"sqlalchemy", false},
+		{".relative", false},
+		{"mypackage.module", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPythonStdLibImport(tt.name); got != tt.expected {
+				t.Errorf("isPythonStdLibImport(%q) = %v, want %v", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Java Tests
+// ============================================================================
+
+func TestBuildImportGraphJava(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create Java files with imports
+	createJSFile(t, filepath.Join(tmpDir, "com", "example", "services"), "UserService.java", `package com.example.services;
+
+import com.example.repositories.UserRepository;
+import com.example.utils.Logger;
+
+public class UserService {
+    private UserRepository repo;
+    private Logger logger;
+}
+`)
+
+	createJSFile(t, filepath.Join(tmpDir, "com", "example", "repositories"), "UserRepository.java", `package com.example.repositories;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import com.example.models.User;
+
+public class UserRepository implements JpaRepository<User, Long> {
+}
+`)
+
+	createJSFile(t, filepath.Join(tmpDir, "com", "example", "utils"), "Logger.java", `package com.example.utils;
+
+public class Logger {
+    public void log(String message) {
+        System.out.println(message);
+    }
+}
+`)
+
+	graph, edges, err := BuildImportGraphJavaContext(context.Background(), tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check that graph has packages
+	packages := graphKeys(graph)
+	if len(packages) < 2 {
+		t.Errorf("expected at least 2 packages, got %d: %v", len(packages), packages)
+	}
+
+	// Check that edges were created
+	if len(edges) == 0 {
+		t.Error("expected at least one import edge")
+	}
+
+	// Check specific imports
+	servicesImports := graph["com/example/services"]
+	if !containsString(servicesImports, "com.example.repositories.UserRepository") {
+		t.Errorf("expected services to import com.example.repositories.UserRepository, got %v", servicesImports)
+	}
+	if !containsString(servicesImports, "com.example.utils.Logger") {
+		t.Errorf("expected services to import com.example.utils.Logger, got %v", servicesImports)
+	}
+}
+
+func TestBuildImportGraphJava_SkipsStdlib(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	createJSFile(t, tmpDir, "App.java", `package com.example;
+
+import java.util.List;
+import java.util.ArrayList;
+import javax.sql.DataSource;
+import com.example.models.User;
+
+public class App {
+}
+`)
+
+	_, edges, err := BuildImportGraphJavaContext(context.Background(), tmpDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should only have com.example.models.User import
+	for _, edge := range edges {
+		if edge.ImportPath == "java.util.List" || edge.ImportPath == "java.util.ArrayList" || edge.ImportPath == "javax.sql.DataSource" {
+			t.Errorf("should not include Java stdlib import: %s", edge.ImportPath)
+		}
+	}
+
+	if len(edges) != 1 {
+		t.Errorf("expected 1 edge (com.example.models.User), got %d", len(edges))
+	}
+}
+
+func TestIsJavaStdLibImport(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"java.util.List", true},
+		{"java.sql.Connection", true},
+		{"javax.servlet.http.HttpServletRequest", true},
+		{"org.springframework.boot.SpringApplication", false},
+		{"com.example.MyClass", false},
+		{"io.jsonwebtoken.Jwts", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isJavaStdLibImport(tt.name); got != tt.expected {
+				t.Errorf("isJavaStdLibImport(%q) = %v, want %v", tt.name, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDetectLanguage(t *testing.T) {
+	tests := []struct {
+		name     string
+		files    map[string]int // extension -> count
+		expected string
+	}{
+		{
+			name:     "Go project",
+			files:    map[string]int{".go": 10, ".py": 2},
+			expected: "go",
+		},
+		{
+			name:     "Python project",
+			files:    map[string]int{".py": 20, ".go": 3},
+			expected: "python",
+		},
+		{
+			name:     "Java project",
+			files:    map[string]int{".java": 15, ".py": 2},
+			expected: "java",
+		},
+		{
+			name:     "JavaScript project",
+			files:    map[string]int{".js": 10, ".ts": 8, ".go": 2},
+			expected: "js",
+		},
+		{
+			name:     "Mixed project - Go wins",
+			files:    map[string]int{".go": 5, ".py": 3, ".js": 2},
+			expected: "go",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			for ext, count := range tt.files {
+				for i := 0; i < count; i++ {
+					createJSFile(t, tmpDir, fmt.Sprintf("file%d%s", i, ext), "content")
+				}
+			}
+
+			got := detectLanguage(tmpDir)
+			if got != tt.expected {
+				t.Errorf("detectLanguage() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 
