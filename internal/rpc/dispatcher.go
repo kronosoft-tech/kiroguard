@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -54,7 +55,15 @@ func (d *Dispatcher) dispatchSafe(ctx context.Context, req *Request) (resp *Resp
 	handler, ok := d.handlers[req.Method]
 	d.mu.RUnlock()
 
+	// Debug: log available methods when method not found
 	if !ok {
+		d.mu.RLock()
+		methods := make([]string, 0, len(d.handlers))
+		for m := range d.handlers {
+			methods = append(methods, m)
+		}
+		d.mu.RUnlock()
+		slog.Warn("method not found", "method", req.Method, "available", methods)
 		return ErrMethodNotFound(req.ID, req.Method)
 	}
 
