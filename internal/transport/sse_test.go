@@ -724,3 +724,42 @@ func TestSSETransport_SSE_DisablesProxyBuffering(t *testing.T) {
 		t.Errorf("X-Accel-Buffering = %q, want \"no\" (SSE behind a proxy must not be buffered)", got)
 	}
 }
+
+// TestSSETransport_StreamableHTTP_PostToSSE verifies the Streamable HTTP path:
+// a POST directly to /sse returns the JSON-RPC response in the body (no SSE
+// stream needed). This is the transport strategy MCP clients try first, and it
+// is robust behind reverse proxies (plain request/response, no streaming).
+func TestSSETransport_StreamableHTTP_PostToSSE(t *testing.T) {
+	transport := NewSSETransport(":0")
+	transport.handler = echoHandler
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", transport.handleSSEEndpoint)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body := `{"jsonrpc":"2.0","id":7,"method":"test.echo","params":{}}`
+	resp, err := http.Post(ts.URL+"/sse", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /sse failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /sse status = %d, want 200 (Streamable HTTP request/response)", resp.StatusCode)
+	}
+	var rpcResp rpc.Response
+	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if rpcResp.Error != nil {
+		t.Fatalf("unexpected error: %+v", rpcResp.Error)
+	}
+	var result map[string]string
+	if err := json.Unmarshal(rpcResp.Result, &result); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if result["echo"] != "test.echo" {
+		t.Errorf("echo = %q, want test.echo", result["echo"])
+	}
+}

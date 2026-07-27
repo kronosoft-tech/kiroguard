@@ -135,7 +135,7 @@ func (s *SSETransport) Start(ctx context.Context, handler MessageHandler) error 
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/message", s.handleMessage)
-	mux.HandleFunc("/sse", s.handleSSE)
+	mux.HandleFunc("/sse", s.handleSSEEndpoint)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
 
@@ -261,6 +261,22 @@ func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		// At this point headers may already be sent; log internally.
 		return
 	}
+}
+
+// handleSSEEndpoint serves the MCP endpoint at /sse for both transports:
+//   - GET  → opens the classic SSE stream (2024-11-05 SSE transport).
+//   - POST → Streamable HTTP (2025-03-26): the JSON-RPC request is handled and
+//     its response is returned directly in the body as application/json.
+//
+// Supporting POST here means an MCP client's preferred "http-first" strategy
+// succeeds (instead of getting 405 and falling back to the proxy-fragile SSE
+// path), giving a robust plain request/response that no reverse proxy buffers.
+func (s *SSETransport) handleSSEEndpoint(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		s.handleMessage(w, r)
+		return
+	}
+	s.handleSSE(w, r)
 }
 
 // handleSSE handles GET /sse requests, establishing a Server-Sent Events stream.
