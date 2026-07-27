@@ -14,7 +14,16 @@ import (
 // in generated Go source files are detected.
 func TestProperty_SDKCallDetectionCompleteness(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
-		svc := rapid.StringMatching(`[a-z]{2,10}`).Draw(t, "service")
+		svc := rapid.StringMatching(`[a-z]{2,10}`).Filter(func(s string) bool {
+			keywords := map[string]bool{
+				"break": true, "default": true, "func": true, "interface": true, "select": true,
+				"case": true, "defer": true, "go": true, "map": true, "struct": true,
+				"chan": true, "else": true, "goto": true, "package": true, "switch": true,
+				"const": true, "fallthrough": true, "if": true, "range": true, "type": true,
+				"continue": true, "for": true, "import": true, "return": true, "var": true,
+			}
+			return !keywords[s]
+		}).Draw(t, "service")
 		nMethods := rapid.IntRange(1, 8).Draw(t, "nMethods")
 		methods := make([]string, nMethods)
 		for i := range methods {

@@ -59,8 +59,8 @@ Built in **Go** for speed and reliability, KiroGuard runs as a single binary and
 - Batch vulnerability lookup via [OSV.dev](https://osv.dev/) API (free, no API key required)
 - Human-readable CVE explanations powered by AWS Bedrock LLM
 
-### 🏗️ Clean-Arch (Architecture Linting)
-- AST-based import graph construction using Go's `go/parser`
+### 🏗️ Clean-Arch (Multi-Language Architecture Linting)
+- Multi-language AST & import graph parsing for **Go**, **Python** (`.py`), and **JavaScript/TypeScript** (`.js`, `.jsx`, `.ts`, `.tsx`)
 - Configurable architecture rules (YAML) with glob pattern matching
 - Default layered architecture rules (domain ↛ infrastructure ↛ presentation)
 - **Read-only operation** — never modifies source files
@@ -73,12 +73,38 @@ Built in **Go** for speed and reliability, KiroGuard runs as a single binary and
 - Monthly cost estimation with documented formulas based on AWS public pricing
 - Concrete dollar amounts (e.g., "$73/month at 1000 req/hr")
 
-### 🛂 IAM-Guard (Least-Privilege IAM Analysis)
-- AST-based detection of AWS SDK calls in Go source code (ec2, s3, lambda, iam, dynamodb, sqs, sns, etc.)
+### 🛂 IAM-Guard (Multi-Language Least-Privilege IAM Analysis)
+- AST-based detection of AWS SDK calls in **Go**, **Python** (`boto3`), and **TypeScript/JavaScript** (`@aws-sdk/client-*`)
 - IaC wildcard scanning for `Action: "*"` and `Resource: "*"` in Terraform, YAML, JSON, TypeScript
 - Least-privilege IAM policy generation via AWS Bedrock LLM (async, non-blocking)
 - Request IDs for correlating async policy generation with scan results
 - Files up to 5MB (configurable) with automatic skip of vendor/node_modules/.git
+
+---
+
+## 🚀 GitHub Action Integration (CI/CD)
+
+Integrate KiroGuard into your GitHub Pull Request workflows to automatically catch hardcoded secrets, architecture violations, wildcard IAM permissions, and cost anti-patterns before merging:
+
+```yaml
+name: KiroGuard PR Guardrail
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  security-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run KiroGuard Enterprise Action
+        uses: luiferdev/kiroguard@v1
+        with:
+          target_directory: '.'
+          fail_on_high_severity: 'true'
+```
+
 
 ---
 

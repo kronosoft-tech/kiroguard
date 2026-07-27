@@ -311,8 +311,8 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case data := <-client.events:
-			// Send data as an SSE event.
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			// Send data as an SSE event named "message" per MCP specification.
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
 			flusher.Flush()
 		case <-ticker.C:
 			// Send keep-alive comment.

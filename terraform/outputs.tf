@@ -1,24 +1,24 @@
-output "alb_dns_name" {
-  description = "DNS name of the ALB — point your CNAME here"
-  value       = aws_lb.kiroguard.dns_name
+output "elastic_ip" {
+  description = "Static Elastic IP allocated for KiroGuard — point your FreeDNS A Record here"
+  value       = aws_eip.kiroguard.public_ip
 }
 
-output "ecs_cluster_name" {
-  description = "Name of the ECS cluster"
-  value       = aws_ecs_cluster.kiroguard.name
+output "freedns_domain" {
+  description = "FreeDNS Domain Name"
+  value       = var.freedns_domain
 }
 
-output "ecs_service_name" {
-  description = "Name of the ECS service"
-  value       = aws_ecs_service.kiroguard.name
+output "https_mcp_url" {
+  description = "HTTPS URL for KiroGuard MCP Server (for IDE connection)"
+  value       = "https://${var.freedns_domain}"
+}
+
+output "ssh_command" {
+  description = "Command to SSH into the KiroGuard EC2 instance"
+  value       = "ssh ec2-user@${aws_eip.kiroguard.public_ip}"
 }
 
 output "vpc_id" {
   description = "ID of the VPC"
   value       = aws_vpc.main.id
-}
-
-output "task_role_arn" {
-  description = "ARN of the KiroGuard task IAM role"
-  value       = aws_iam_role.kiroguard_task.arn
 }

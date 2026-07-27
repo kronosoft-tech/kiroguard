@@ -255,7 +255,7 @@ func (h *IAMGuardHandler) Handle(ctx context.Context, params json.RawMessage) (i
 	h.metrics.ScansTotal.Add(1)
 	h.logger.Info("scan_started", "event", "scan_started", "target", input.DirectoryPath)
 
-	actions, usages, err := AnalyzeGoSDKCalls(input.DirectoryPath)
+	actions, usages, err := AnalyzeSDKCalls(input.DirectoryPath)
 	if err != nil {
 		return nil, fmt.Errorf("analyze sdk calls: %w", err)
 	}

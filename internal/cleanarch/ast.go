@@ -2,12 +2,14 @@
 package cleanarch
 
 import (
+	"bufio"
 	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -24,17 +26,50 @@ type ImportEdge struct {
 	LineNumber int    `json:"line_number"`
 }
 
-// BuildImportGraph recursively parses all Go source files in the given directory
-// and builds a directed import graph. It is equivalent to BuildImportGraphContext
-// with a background (non-cancellable) context.
+// Ignored directory names for walking codebase trees.
+var ignoredDirs = map[string]bool{
+	"vendor":       true,
+	"node_modules": true,
+	".git":         true,
+	".venv":        true,
+	"venv":         true,
+	"__pycache__":  true,
+	"dist":         true,
+	"build":        true,
+	".next":        true,
+	"coverage":     true,
+}
+
+// Python standard library top-level modules.
+var pythonStdLibModules = map[string]bool{
+	"sys": true, "os": true, "re": true, "json": true, "math": true,
+	"typing": true, "datetime": true, "time": true, "collections": true,
+	"functools": true, "itertools": true, "pathlib": true, "unittest": true,
+	"logging": true, "random": true, "string": true, "dataclasses": true,
+	"enum": true, "abc": true, "asyncio": true, "hashlib": true,
+	"base64": true, "subprocess": true, "io": true, "copy": true,
+	"traceback": true, "contextlib": true, "argparse": true, "inspect": true,
+	"socket": true, "struct": true, "urllib": true, "http": true,
+	"threading": true, "multiprocessing": true, "shutil": true, "tempfile": true,
+	"glob": true, "platform": true, "uuid": true, "signal": true, "warnings": true,
+}
+
+// Node.js standard library built-in modules.
+var nodeStdLibModules = map[string]bool{
+	"fs": true, "path": true, "http": true, "https": true, "events": true,
+	"util": true, "os": true, "crypto": true, "stream": true, "child_process": true,
+	"url": true, "querystring": true, "buffer": true, "zlib": true, "net": true,
+	"tls": true, "dns": true, "readline": true, "assert": true, "console": true,
+	"process": true, "timers": true, "cluster": true, "dgram": true,
+}
+
+// BuildImportGraph recursively parses all supported source files (Go, Python, JS/TS) in dir
+// and builds a directed import graph.
 func BuildImportGraph(dir string) (ImportGraph, []ImportEdge, error) {
 	return BuildImportGraphContext(context.Background(), dir)
 }
 
 // BuildImportGraphContext is the context-aware variant of BuildImportGraph.
-// If ctx is cancelled or its deadline is exceeded during the directory walk,
-// the walk stops early and the graph/edges collected so far are returned with a
-// nil error (partial results). Callers can inspect ctx.Err() to detect truncation.
 func BuildImportGraphContext(ctx context.Context, dir string) (ImportGraph, []ImportEdge, error) {
 	graph := make(ImportGraph)
 	var edges []ImportEdge
@@ -49,78 +84,29 @@ func BuildImportGraphContext(ctx context.Context, dir string) (ImportGraph, []Im
 			return err
 		}
 
-		// Stop the walk if the context is done, keeping partial results.
 		if ctx.Err() != nil {
 			return filepath.SkipAll
 		}
 
-		// Skip vendor directories
-		if info.IsDir() && info.Name() == "vendor" {
-			return filepath.SkipDir
-		}
-
-		// Only process .go files, skip test files
 		if info.IsDir() {
-			return nil
-		}
-		if !strings.HasSuffix(info.Name(), ".go") {
-			return nil
-		}
-		if strings.HasSuffix(info.Name(), "_test.go") {
-			return nil
-		}
-
-		// Parse the file
-		fset := token.NewFileSet()
-		f, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
-		if parseErr != nil {
-			// Skip files that can't be parsed
-			return nil
-		}
-
-		// Determine the relative package path from the root directory
-		relPath, err := filepath.Rel(absDir, filepath.Dir(path))
-		if err != nil {
-			return err
-		}
-		// Normalize to forward slashes for consistency
-		pkgPath := filepath.ToSlash(relPath)
-		if pkgPath == "" {
-			pkgPath = "."
-		}
-
-		// Relative file path for edge info
-		relFilePath, err := filepath.Rel(absDir, path)
-		if err != nil {
-			return err
-		}
-		relFilePath = filepath.ToSlash(relFilePath)
-
-		// Extract imports
-		for _, imp := range f.Imports {
-			importPath := strings.Trim(imp.Path.Value, `"`)
-
-			// Skip standard library imports (no dots in path and not a relative import)
-			if isStdLibImport(importPath) {
-				continue
+			if ignoredDirs[info.Name()] {
+				return filepath.SkipDir
 			}
+			return nil
+		}
 
-			// Record edge
-			edge := ImportEdge{
-				FromFile:   relFilePath,
-				FromPkg:    pkgPath,
-				ImportPath: importPath,
-				LineNumber: fset.Position(imp.Pos()).Line,
-			}
+		fileEdges, pkgPath, shouldProcess := extractFileImports(path, absDir)
+		if !shouldProcess {
+			return nil
+		}
+
+		for _, edge := range fileEdges {
 			edges = append(edges, edge)
-
-			// Add to graph
-			if !containsString(graph[pkgPath], importPath) {
-				graph[pkgPath] = append(graph[pkgPath], importPath)
+			if !containsString(graph[pkgPath], edge.ImportPath) {
+				graph[pkgPath] = append(graph[pkgPath], edge.ImportPath)
 			}
 		}
 
-		// Ensure the package appears in the graph even if it has no non-stdlib imports
 		if _, exists := graph[pkgPath]; !exists {
 			graph[pkgPath] = []string{}
 		}
@@ -135,15 +121,235 @@ func BuildImportGraphContext(ctx context.Context, dir string) (ImportGraph, []Im
 	return graph, edges, nil
 }
 
-// isStdLibImport returns true if the import path looks like a standard library import.
-// Standard library imports don't contain dots in their path (e.g., "fmt", "os/exec").
-// Paths with dots are assumed to be external or local module imports (e.g., "github.com/...", "example.com/...").
+// extractFileImports parses Go, Python, or JS/TS files to extract import edges.
+func extractFileImports(filePath, absRoot string) ([]ImportEdge, string, bool) {
+	relPath, err := filepath.Rel(absRoot, filepath.Dir(filePath))
+	if err != nil {
+		return nil, "", false
+	}
+	pkgPath := filepath.ToSlash(relPath)
+	if pkgPath == "" {
+		pkgPath = "."
+	}
+
+	relFilePath, err := filepath.Rel(absRoot, filePath)
+	if err != nil {
+		return nil, "", false
+	}
+	relFilePath = filepath.ToSlash(relFilePath)
+
+	baseName := filepath.Base(filePath)
+
+	if strings.HasSuffix(baseName, ".go") {
+		if strings.HasSuffix(baseName, "_test.go") {
+			return nil, "", false
+		}
+		fset := token.NewFileSet()
+		f, parseErr := parser.ParseFile(fset, filePath, nil, parser.ImportsOnly)
+		if parseErr != nil {
+			return nil, "", false
+		}
+		var edges []ImportEdge
+		for _, imp := range f.Imports {
+			importPath := strings.Trim(imp.Path.Value, `"`)
+			if isStdLibImport(importPath) {
+				continue
+			}
+			edges = append(edges, ImportEdge{
+				FromFile:   relFilePath,
+				FromPkg:    pkgPath,
+				ImportPath: importPath,
+				LineNumber: fset.Position(imp.Pos()).Line,
+			})
+		}
+		return edges, pkgPath, true
+	}
+
+	if strings.HasSuffix(baseName, ".py") {
+		if strings.HasSuffix(baseName, "_test.py") || strings.HasPrefix(baseName, "test_") {
+			return nil, "", false
+		}
+		edges := parsePythonImports(filePath, relFilePath, pkgPath)
+		return edges, pkgPath, true
+	}
+
+	if isJSTSSuffix(baseName) {
+		if isTestJSTSFile(baseName) {
+			return nil, "", false
+		}
+		edges := parseJSImports(filePath, relFilePath, pkgPath)
+		return edges, pkgPath, true
+	}
+
+	return nil, "", false
+}
+
+func isJSTSSuffix(name string) bool {
+	suffixes := []string{".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+	for _, s := range suffixes {
+		if strings.HasSuffix(name, s) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTestJSTSFile(name string) bool {
+	return strings.Contains(name, ".test.") || strings.Contains(name, ".spec.") || strings.HasSuffix(name, "_test.ts") || strings.HasSuffix(name, "_test.js")
+}
+
+// Regex patterns for Python import parsing.
+var (
+	rePyFromImport = regexp.MustCompile(`^\s*from\s+([\w\.]+)\s+import`)
+	rePyImport     = regexp.MustCompile(`^\s*import\s+([\w\.,\s]+)`)
+)
+
+func parsePythonImports(filePath, relFilePath, pkgPath string) []ImportEdge {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var edges []ImportEdge
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+
+		if match := rePyFromImport.FindStringSubmatch(line); len(match) > 1 {
+			imp := match[1]
+			topMod := strings.Split(imp, ".")[0]
+			if !pythonStdLibModules[topMod] && imp != "" {
+				edges = append(edges, ImportEdge{
+					FromFile:   relFilePath,
+					FromPkg:    pkgPath,
+					ImportPath: imp,
+					LineNumber: lineNum,
+				})
+			}
+			continue
+		}
+
+		if match := rePyImport.FindStringSubmatch(line); len(match) > 1 {
+			items := strings.Split(match[1], ",")
+			for _, item := range items {
+				item = strings.TrimSpace(item)
+				if item == "" {
+					continue
+				}
+				parts := strings.Fields(item)
+				if len(parts) > 0 {
+					imp := parts[0]
+					topMod := strings.Split(imp, ".")[0]
+					if !pythonStdLibModules[topMod] {
+						edges = append(edges, ImportEdge{
+							FromFile:   relFilePath,
+							FromPkg:    pkgPath,
+							ImportPath: imp,
+							LineNumber: lineNum,
+						})
+					}
+				}
+			}
+		}
+	}
+
+	return edges
+}
+
+// Regex patterns for JS/TS import parsing.
+var (
+	reJSImportFrom    = regexp.MustCompile(`(?:import|export)\s+(?:[\s\w{},*$'"]+?\s+from\s+)?['"]([^'"]+)['"]`)
+	reJSRequire       = regexp.MustCompile(`require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	reJSDynamicImport = regexp.MustCompile(`import\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+)
+
+func parseJSImports(filePath, relFilePath, pkgPath string) []ImportEdge {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var edges []ImportEdge
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+
+	for scanner.Scan() {
+		lineNum++
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") {
+			continue
+		}
+
+		matches := reJSImportFrom.FindAllStringSubmatch(line, -1)
+		for _, m := range matches {
+			if len(m) > 1 && m[1] != "" {
+				imp := m[1]
+				if !isNodeStdLib(imp) {
+					edges = append(edges, ImportEdge{
+						FromFile:   relFilePath,
+						FromPkg:    pkgPath,
+						ImportPath: imp,
+						LineNumber: lineNum,
+					})
+				}
+			}
+		}
+
+		reqMatches := reJSRequire.FindAllStringSubmatch(line, -1)
+		for _, m := range reqMatches {
+			if len(m) > 1 && m[1] != "" {
+				imp := m[1]
+				if !isNodeStdLib(imp) {
+					edges = append(edges, ImportEdge{
+						FromFile:   relFilePath,
+						FromPkg:    pkgPath,
+						ImportPath: imp,
+						LineNumber: lineNum,
+					})
+				}
+			}
+		}
+
+		dynMatches := reJSDynamicImport.FindAllStringSubmatch(line, -1)
+		for _, m := range dynMatches {
+			if len(m) > 1 && m[1] != "" {
+				imp := m[1]
+				if !isNodeStdLib(imp) {
+					edges = append(edges, ImportEdge{
+						FromFile:   relFilePath,
+						FromPkg:    pkgPath,
+						ImportPath: imp,
+						LineNumber: lineNum,
+					})
+				}
+			}
+		}
+	}
+
+	return edges
+}
+
+func isNodeStdLib(imp string) bool {
+	if strings.HasPrefix(imp, ".") || strings.HasPrefix(imp, "/") || strings.HasPrefix(imp, "@/") {
+		return false
+	}
+	clean := strings.TrimPrefix(imp, "node:")
+	first := strings.Split(clean, "/")[0]
+	return nodeStdLibModules[first]
+}
+
+// isStdLibImport returns true if the Go import path looks like a standard library import.
 func isStdLibImport(importPath string) bool {
-	// Relative imports are not stdlib
 	if strings.HasPrefix(importPath, ".") {
 		return false
 	}
-	// Standard library packages don't contain dots in the first path element
 	firstElement := importPath
 	if idx := strings.Index(importPath, "/"); idx != -1 {
 		firstElement = importPath[:idx]
@@ -151,8 +357,7 @@ func isStdLibImport(importPath string) bool {
 	return !strings.Contains(firstElement, ".")
 }
 
-// ParseFileImports parses a single Go file and returns the import edges found in it.
-// This is useful for analyzing individual files without walking a full directory.
+// ParseFileImports parses a single file (Go, Python, JS/TS) and returns the import edges found in it.
 func ParseFileImports(filePath string, rootDir string) ([]ImportEdge, error) {
 	absRoot, err := filepath.Abs(rootDir)
 	if err != nil {
@@ -164,40 +369,7 @@ func ParseFileImports(filePath string, rootDir string) ([]ImportEdge, error) {
 		return nil, err
 	}
 
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, absFile, nil, parser.ImportsOnly)
-	if err != nil {
-		return nil, err
-	}
-
-	relPath, err := filepath.Rel(absRoot, filepath.Dir(absFile))
-	if err != nil {
-		return nil, err
-	}
-	pkgPath := filepath.ToSlash(relPath)
-	if pkgPath == "" {
-		pkgPath = "."
-	}
-
-	relFilePath, err := filepath.Rel(absRoot, absFile)
-	if err != nil {
-		return nil, err
-	}
-	relFilePath = filepath.ToSlash(relFilePath)
-
-	var edges []ImportEdge
-	for _, imp := range f.Imports {
-		importPath := strings.Trim(imp.Path.Value, `"`)
-		if isStdLibImport(importPath) {
-			continue
-		}
-		edges = append(edges, ImportEdge{
-			FromFile:   relFilePath,
-			FromPkg:    pkgPath,
-			ImportPath: importPath,
-			LineNumber: fset.Position(imp.Pos()).Line,
-		})
-	}
+	edges, _, _ := extractFileImports(absFile, absRoot)
 	return edges, nil
 }
 
@@ -220,3 +392,4 @@ func nodeImports(f *ast.File) []string {
 	}
 	return imports
 }
+
