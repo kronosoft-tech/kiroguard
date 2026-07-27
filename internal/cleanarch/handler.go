@@ -317,7 +317,40 @@ func (h *CleanArchHandler) Handle(ctx context.Context, params json.RawMessage) (
 	}
 
 	// Step 2: Build import graph (read-only AST analysis, cancellable)
-	_, edges, err := BuildImportGraphContext(scanCtx, input.DirectoryPath)
+	// Detect language from directory contents and dispatch to appropriate parser
+	lang := detectLanguage(input.DirectoryPath)
+	var edges []ImportEdge
+	var err error
+
+	switch lang {
+	case "go":
+		_, edges, err = BuildImportGraphContext(scanCtx, input.DirectoryPath)
+	case "js":
+		_, edges, err = BuildImportGraphJSContext(scanCtx, input.DirectoryPath)
+	case "python":
+		_, edges, err = BuildImportGraphPythonContext(scanCtx, input.DirectoryPath)
+	case "java":
+		_, edges, err = BuildImportGraphJavaContext(scanCtx, input.DirectoryPath)
+	default:
+		// Try all parsers and merge results
+		_, goEdges, goErr := BuildImportGraphContext(scanCtx, input.DirectoryPath)
+		if goErr == nil {
+			edges = append(edges, goEdges...)
+		}
+		_, jsEdges, jsErr := BuildImportGraphJSContext(scanCtx, input.DirectoryPath)
+		if jsErr == nil {
+			edges = append(edges, jsEdges...)
+		}
+		_, pyEdges, pyErr := BuildImportGraphPythonContext(scanCtx, input.DirectoryPath)
+		if pyErr == nil {
+			edges = append(edges, pyEdges...)
+		}
+		_, javaEdges, javaErr := BuildImportGraphJavaContext(scanCtx, input.DirectoryPath)
+		if javaErr == nil {
+			edges = append(edges, javaEdges...)
+		}
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze directory: %w", err)
 	}
