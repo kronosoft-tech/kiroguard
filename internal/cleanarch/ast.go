@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -219,4 +220,558 @@ func nodeImports(f *ast.File) []string {
 		imports = append(imports, path)
 	}
 	return imports
+}
+
+// ============================================================================
+// JavaScript/TypeScript Support
+// ============================================================================
+
+// jsImportPattern matches ES6 import statements
+// import { foo } from 'bar';
+// import foo from 'bar';
+// import * as foo from 'bar';
+// import 'bar'; (side-effect import)
+var jsImportPattern = regexp.MustCompile(`^import\s+(?:(?:\{[^}]*\}|[\w$*]+\s+(?:as\s+\w+)?|[\w$]+)\s+from\s+)?['"]([^'"]+)['"]`)
+
+// jsRequirePattern matches CommonJS require calls
+// const foo = require('bar');
+// const { foo } = require('bar');
+// require('bar');
+var jsRequirePattern = regexp.MustCompile(`(?:require\s*\(\s*['"]([^'"]+)['"]\s*\))`)
+
+// jsExportPattern matches export statements (for future use)
+var jsExportPattern = regexp.MustCompile(`^export\s+(?:default\s+)?(?:function|class|const|let|var|interface|type)\s+\w+`)
+
+// jsNodeBuiltins contains Node.js standard library modules
+var jsNodeBuiltins = map[string]bool{
+	"assert": true, "buffer": true, "child_process": true, "cluster": true,
+	"console": true, "constants": true, "crypto": true, "dgram": true,
+	"dns": true, "domain": true, "events": true, "fs": true,
+	"http": true, "https": true, "module": true, "net": true,
+	"os": true, "path": true, "process": true, "punycode": true,
+	"querystring": true, "readline": true, "repl": true, "stream": true,
+	"string_decoder": true, "sys": true, "timers": true, "tls": true,
+	"tty": true, "url": true, "util": true, "v8": true,
+	"vm": true, "worker_threads": true, "zlib": true,
+}
+
+// BuildImportGraphJS builds an import graph for JavaScript/TypeScript files.
+func BuildImportGraphJS(dir string) (ImportGraph, []ImportEdge, error) {
+	return BuildImportGraphJSContext(context.Background(), dir)
+}
+
+// BuildImportGraphJSContext is the context-aware variant of BuildImportGraphJS.
+func BuildImportGraphJSContext(ctx context.Context, dir string) (ImportGraph, []ImportEdge, error) {
+	graph := make(ImportGraph)
+	var edges []ImportEdge
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Stop the walk if the context is done
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
+
+		// Skip vendor and node_modules directories
+		if info.IsDir() && (info.Name() == "vendor" || info.Name() == "node_modules" || info.Name() == ".git") {
+			return filepath.SkipDir
+		}
+
+		// Only process JS/TS files
+		if info.IsDir() {
+			return nil
+		}
+		if !isJSFile(info.Name()) {
+			return nil
+		}
+
+		// Read file content
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+
+		// Determine relative package path
+		relPath, relErr := filepath.Rel(absDir, filepath.Dir(path))
+		if relErr != nil {
+			return relErr
+		}
+		pkgPath := filepath.ToSlash(relPath)
+		if pkgPath == "" {
+			pkgPath = "."
+		}
+
+		// Relative file path
+		relFilePath, relErr := filepath.Rel(absDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		relFilePath = filepath.ToSlash(relFilePath)
+
+		// Extract imports from file content
+		fileEdges := extractJSImports(string(content), relFilePath, pkgPath)
+		edges = append(edges, fileEdges...)
+
+		// Add to graph
+		for _, edge := range fileEdges {
+			if !containsString(graph[pkgPath], edge.ImportPath) {
+				graph[pkgPath] = append(graph[pkgPath], edge.ImportPath)
+			}
+		}
+
+		// Ensure the package appears in the graph
+		if _, exists := graph[pkgPath]; !exists {
+			graph[pkgPath] = []string{}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return graph, edges, nil
+}
+
+// isJSFile checks if a filename is a JavaScript or TypeScript file
+func isJSFile(name string) bool {
+	jsExtensions := []string{
+		".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+	}
+	for _, ext := range jsExtensions {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractJSImports extracts import statements from JS/TS source code
+func extractJSImports(content, filePath, pkgPath string) []ImportEdge {
+	var edges []ImportEdge
+	lines := strings.Split(content, "\n")
+
+	for lineNum, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Skip comments
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+
+		// Check for ES6 imports
+		if matches := jsImportPattern.FindStringSubmatch(trimmed); matches != nil {
+			importPath := matches[1]
+			if !isJSStdLibImport(importPath) {
+				edges = append(edges, ImportEdge{
+					FromFile:   filePath,
+					FromPkg:    pkgPath,
+					ImportPath: importPath,
+					LineNumber: lineNum + 1,
+				})
+			}
+		}
+
+		// Check for require() calls
+		if matches := jsRequirePattern.FindStringSubmatch(trimmed); matches != nil {
+			importPath := matches[1]
+			if !isJSStdLibImport(importPath) {
+				edges = append(edges, ImportEdge{
+					FromFile:   filePath,
+					FromPkg:    pkgPath,
+					ImportPath: importPath,
+					LineNumber: lineNum + 1,
+				})
+			}
+		}
+	}
+
+	return edges
+}
+
+// isJSStdLibImport checks if an import path is a Node.js built-in module
+func isJSStdLibImport(importPath string) bool {
+	// Relative imports are not stdlib
+	if strings.HasPrefix(importPath, ".") {
+		return false
+	}
+
+	// Check for scoped packages (e.g., @types/node)
+	if strings.HasPrefix(importPath, "@") {
+		parts := strings.Split(importPath, "/")
+		if len(parts) >= 2 {
+			return parts[0] == "@types" && parts[1] == "node"
+		}
+		return false
+	}
+
+	// Check for built-in modules
+	moduleName := importPath
+	if idx := strings.Index(importPath, "/"); idx != -1 {
+		moduleName = importPath[:idx]
+	}
+
+	return jsNodeBuiltins[moduleName]
+}
+
+// ============================================================================
+// Language Detection
+// ============================================================================
+
+// detectLanguage scans a directory to determine the dominant programming language.
+func detectLanguage(dir string) string {
+	extCounts := map[string]int{
+		".go":  0,
+		".js":  0, ".jsx": 0, ".ts": 0, ".tsx": 0, ".mjs": 0, ".cjs": 0,
+		".py":  0,
+		".java": 0,
+	}
+
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		// Skip vendor/node_modules
+		if strings.Contains(path, "vendor") || strings.Contains(path, "node_modules") {
+			return filepath.SkipDir
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if _, ok := extCounts[ext]; ok {
+			extCounts[ext]++
+		}
+		return nil
+	})
+
+	// Determine dominant language
+	goCount := extCounts[".go"]
+	jsCount := extCounts[".js"] + extCounts[".jsx"] + extCounts[".ts"] + extCounts[".tsx"] + extCounts[".mjs"] + extCounts[".cjs"]
+	pyCount := extCounts[".py"]
+	javaCount := extCounts[".java"]
+
+	maxCount := goCount
+	lang := "go"
+
+	if jsCount > maxCount {
+		maxCount = jsCount
+		lang = "js"
+	}
+	if pyCount > maxCount {
+		maxCount = pyCount
+		lang = "python"
+	}
+	if javaCount > maxCount {
+		maxCount = javaCount
+		lang = "java"
+	}
+
+	return lang
+}
+
+// ============================================================================
+// Python Support
+// ============================================================================
+
+// pythonImportPattern matches Python import statements
+// import foo
+// import foo.bar
+// from foo import bar
+// from foo.bar import baz
+var pythonImportPattern = regexp.MustCompile(`^(?:import\s+([\w.]+)|from\s+([\w.]+)\s+import)`)
+
+// pythonBuiltinModules contains Python standard library modules
+var pythonBuiltinModules = map[string]bool{
+	"abc": true, "aifc": true, "argparse": true, "array": true,
+	"ast": true, "asynchat": true, "asyncio": true, "asyncore": true,
+	"atexit": true, "audioop": true, "base64": true, "bdb": true,
+	"binascii": true, "binhex": true, "bisect": true, "builtins": true,
+	"bz2": true, "calendar": true, "cgi": true, "cgitb": true,
+	"chunk": true, "cmath": true, "cmd": true, "code": true,
+	"codecs": true, "codeop": true, "collections": true, "colorsys": true,
+	"compileall": true, "concurrent": true, "configparser": true, "contextlib": true,
+	"contextvars": true, "copy": true, "copyreg": true, "cProfile": true,
+	"crypt": true, "csv": true, "ctypes": true, "curses": true,
+	"dataclasses": true, "datetime": true, "dbm": true, "decimal": true,
+	"difflib": true, "dis": true, "distutils": true, "doctest": true,
+	"email": true, "encodings": true, "enum": true, "errno": true,
+	"faulthandler": true, "fcntl": true, "filecmp": true, "fileinput": true,
+	"fnmatch": true, "fractions": true, "ftplib": true, "functools": true,
+	"gc": true, "getopt": true, "getpass": true, "gettext": true,
+	"glob": true, "graphlib": true, "grp": true, "gzip": true,
+	"hashlib": true, "heapq": true, "hmac": true, "html": true,
+	"http": true, "idlelib": true, "imaplib": true, "imghdr": true,
+	"imp": true, "importlib": true, "inspect": true, "io": true,
+	"ipaddress": true, "itertools": true, "json": true, "keyword": true,
+	"lib2to3": true, "linecache": true, "locale": true, "logging": true,
+	"lzma": true, "mailbox": true, "mailcap": true, "marshal": true,
+	"math": true, "mimetypes": true, "mmap": true, "modulefinder": true,
+	"multiprocessing": true, "netrc": true, "nis": true, "nntplib": true,
+	"numbers": true, "operator": true, "optparse": true, "os": true,
+	"ossaudiodev": true, "pathlib": true, "pdb": true, "pickle": true,
+	"pickletools": true, "pipes": true, "pkgutil": true, "platform": true,
+	"plistlib": true, "poplib": true, "posix": true, "posixpath": true,
+	"pprint": true, "profile": true, "pstats": true, "pty": true,
+	"pwd": true, "py_compile": true, "pyclbr": true, "pydoc": true,
+	"queue": true, "quopri": true, "random": true, "re": true,
+	"readline": true, "reprlib": true, "resource": true, "rlcompleter": true,
+	"runpy": true, "sched": true, "secrets": true, "select": true,
+	"selectors": true, "shelve": true, "shlex": true, "shutil": true,
+	"signal": true, "site": true, "smtpd": true, "smtplib": true,
+	"sndhdr": true, "socket": true, "socketserver": true, "sqlite3": true,
+	"ssl": true, "stat": true, "statistics": true, "string": true,
+	"struct": true, "subprocess": true, "sunau": true, "symtable": true,
+	"sys": true, "sysconfig": true, "syslog": true, "tabnanny": true,
+	"tarfile": true, "telnetlib": true, "tempfile": true, "termios": true,
+	"textwrap": true, "threading": true, "time": true, "timeit": true,
+	"tkinter": true, "token": true, "tokenize": true, "tomllib": true,
+	"trace": true, "traceback": true, "tracemalloc": true, "tty": true,
+	"turtle": true, "turtledemo": true, "types": true, "typing": true,
+	"unicodedata": true, "unittest": true, "urllib": true, "uu": true,
+	"uuid": true, "venv": true, "warnings": true, "wave": true,
+	"weakref": true, "webbrowser": true, "winreg": true, "winsound": true,
+	"wsgiref": true, "xdrlib": true, "xml": true, "xmlrpc": true,
+	"zipapp": true, "zipfile": true, "zipimport": true, "zlib": true,
+}
+
+// BuildImportGraphPythonContext builds an import graph for Python files.
+func BuildImportGraphPythonContext(ctx context.Context, dir string) (ImportGraph, []ImportEdge, error) {
+	graph := make(ImportGraph)
+	var edges []ImportEdge
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
+		if info.IsDir() && (info.Name() == "vendor" || info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == "__pycache__") {
+			return filepath.SkipDir
+		}
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".py") {
+			return nil
+		}
+
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+
+		relPath, relErr := filepath.Rel(absDir, filepath.Dir(path))
+		if relErr != nil {
+			return relErr
+		}
+		pkgPath := filepath.ToSlash(relPath)
+		if pkgPath == "" {
+			pkgPath = "."
+		}
+
+		relFilePath, relErr := filepath.Rel(absDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		relFilePath = filepath.ToSlash(relFilePath)
+
+		fileEdges := extractPythonImports(string(content), relFilePath, pkgPath)
+		edges = append(edges, fileEdges...)
+
+		for _, edge := range fileEdges {
+			if !containsString(graph[pkgPath], edge.ImportPath) {
+				graph[pkgPath] = append(graph[pkgPath], edge.ImportPath)
+			}
+		}
+
+		if _, exists := graph[pkgPath]; !exists {
+			graph[pkgPath] = []string{}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, err
+	}
+	return graph, edges, nil
+}
+
+// extractPythonImports extracts import statements from Python source code
+func extractPythonImports(content, filePath, pkgPath string) []ImportEdge {
+	var edges []ImportEdge
+	lines := strings.Split(content, "\n")
+
+	for lineNum, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if matches := pythonImportPattern.FindStringSubmatch(trimmed); matches != nil {
+			var importPath string
+			if matches[1] != "" {
+				importPath = matches[1]
+			} else {
+				importPath = matches[2]
+			}
+
+			if !isPythonStdLibImport(importPath) {
+				edges = append(edges, ImportEdge{
+					FromFile:   filePath,
+					FromPkg:    pkgPath,
+					ImportPath: importPath,
+					LineNumber: lineNum + 1,
+				})
+			}
+		}
+	}
+	return edges
+}
+
+// isPythonStdLibImport checks if an import path is a Python built-in module
+func isPythonStdLibImport(importPath string) bool {
+	// Relative imports are not stdlib
+	if strings.HasPrefix(importPath, ".") {
+		return false
+	}
+
+	// Get the root module name
+	moduleName := importPath
+	if idx := strings.Index(importPath, "."); idx != -1 {
+		moduleName = importPath[:idx]
+	}
+
+	return pythonBuiltinModules[moduleName]
+}
+
+// ============================================================================
+// Java Support
+// ============================================================================
+
+// javaImportPattern matches Java import statements
+// import java.util.List;
+// import com.example.MyClass;
+// import static org.junit.Assert.assertEquals;
+var javaImportPattern = regexp.MustCompile(`^import\s+(?:static\s+)?([\w.]+);`)
+
+// javaPackagePattern matches Java package declarations
+var javaPackagePattern = regexp.MustCompile(`^package\s+([\w.]+);`)
+
+// javaStdLibPackages contains Java standard library packages
+var javaStdLibPackages = map[string]bool{
+	"java": true, "javax": true, "jdk": true, "org.xml": true,
+	"org.w3c": true, "org.ietf": true, "org.jcp": true,
+}
+
+// BuildImportGraphJavaContext builds an import graph for Java files.
+func BuildImportGraphJavaContext(ctx context.Context, dir string) (ImportGraph, []ImportEdge, error) {
+	graph := make(ImportGraph)
+	var edges []ImportEdge
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if ctx.Err() != nil {
+			return filepath.SkipAll
+		}
+		if info.IsDir() && (info.Name() == "vendor" || info.Name() == "node_modules" || info.Name() == ".git" || info.Name() == "target" || info.Name() == "build") {
+			return filepath.SkipDir
+		}
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".java") {
+			return nil
+		}
+
+		content, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+
+		relPath, relErr := filepath.Rel(absDir, filepath.Dir(path))
+		if relErr != nil {
+			return relErr
+		}
+		pkgPath := filepath.ToSlash(relPath)
+		if pkgPath == "" {
+			pkgPath = "."
+		}
+
+		relFilePath, relErr := filepath.Rel(absDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		relFilePath = filepath.ToSlash(relFilePath)
+
+		fileEdges := extractJavaImports(string(content), relFilePath, pkgPath)
+		edges = append(edges, fileEdges...)
+
+		for _, edge := range fileEdges {
+			if !containsString(graph[pkgPath], edge.ImportPath) {
+				graph[pkgPath] = append(graph[pkgPath], edge.ImportPath)
+			}
+		}
+
+		if _, exists := graph[pkgPath]; !exists {
+			graph[pkgPath] = []string{}
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, nil, err
+	}
+	return graph, edges, nil
+}
+
+// extractJavaImports extracts import statements from Java source code
+func extractJavaImports(content, filePath, pkgPath string) []ImportEdge {
+	var edges []ImportEdge
+	lines := strings.Split(content, "\n")
+
+	for lineNum, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+
+		if matches := javaImportPattern.FindStringSubmatch(trimmed); matches != nil {
+			importPath := matches[1]
+			if !isJavaStdLibImport(importPath) {
+				edges = append(edges, ImportEdge{
+					FromFile:   filePath,
+					FromPkg:    pkgPath,
+					ImportPath: importPath,
+					LineNumber: lineNum + 1,
+				})
+			}
+		}
+	}
+	return edges
+}
+
+// isJavaStdLibImport checks if an import path is a Java built-in module
+func isJavaStdLibImport(importPath string) bool {
+	// Get the root package
+	rootPkg := importPath
+	if idx := strings.Index(importPath, "."); idx != -1 {
+		rootPkg = importPath[:idx]
+	}
+	return javaStdLibPackages[rootPkg]
 }
