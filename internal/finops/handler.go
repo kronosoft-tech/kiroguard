@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/luiferdev/kiroguard/internal/llm"
 	"github.com/luiferdev/kiroguard/internal/rpc"
@@ -54,7 +56,7 @@ func NewFinOpsHandler(detector *PatternDetector, estimator *CostEstimator, llmBa
 // Handle processes a finops/analyze request.
 // Flow:
 //  1. Parse params and validate source_code is not empty
-//  2. Call detector.DetectFromSource(source, filePath)
+//  2. Detect language from file extension and dispatch to appropriate parser
 //  3. For each pattern, call estimator.Estimate(pattern, requestsPerHour)
 //  4. If LLM available, generate explanations; otherwise use heuristic messages
 //  5. Sum all costs into TotalCost
@@ -68,8 +70,8 @@ func (h *FinOpsHandler) Handle(ctx context.Context, params json.RawMessage) (int
 		return nil, fmt.Errorf("invalid params: source_code is required")
 	}
 
-	// Step 1: Detect expensive patterns
-	patterns, err := h.detector.DetectFromSource(input.SourceCode, input.FilePath)
+	// Step 1: Detect language from file extension and parse
+	patterns, err := h.detectPatterns(input.SourceCode, input.FilePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze source: %w", err)
 	}
@@ -105,6 +107,48 @@ func (h *FinOpsHandler) Handle(ctx context.Context, params json.RawMessage) (int
 		TotalCost: totalCost,
 		Message:   message,
 	}, nil
+}
+
+// detectPatterns dispatches to the appropriate language parser based on file extension.
+func (h *FinOpsHandler) detectPatterns(sourceCode, filePath string) ([]DetectedPattern, error) {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	switch ext {
+	case ".go":
+		return h.detector.DetectFromSource(sourceCode, filePath)
+	case ".js", ".jsx", ".mjs", ".cjs":
+		return h.detector.DetectFromSourceJS(sourceCode, filePath), nil
+	case ".ts", ".tsx":
+		return h.detector.DetectFromSourceJS(sourceCode, filePath), nil
+	case ".py":
+		return h.detector.DetectFromSourcePython(sourceCode, filePath), nil
+	case ".java":
+		return h.detector.DetectFromSourceJava(sourceCode, filePath), nil
+	default:
+		// Try to detect by content if extension is unknown
+		return h.detectByContent(sourceCode, filePath)
+	}
+}
+
+// detectByContent tries to detect the language by examining the source code content.
+func (h *FinOpsHandler) detectByContent(sourceCode, filePath string) ([]DetectedPattern, error) {
+	// Check for Go-specific patterns
+	if strings.Contains(sourceCode, "package ") && (strings.Contains(sourceCode, "import \"") || strings.Contains(sourceCode, "func ")) {
+		return h.detector.DetectFromSource(sourceCode, filePath)
+	}
+
+	// Check for Python-specific patterns
+	if strings.Contains(sourceCode, "def ") && (strings.Contains(sourceCode, "import ") || strings.Contains(sourceCode, "from ")) {
+		return h.detector.DetectFromSourcePython(sourceCode, filePath), nil
+	}
+
+	// Check for Java-specific patterns
+	if strings.Contains(sourceCode, "public class ") || strings.Contains(sourceCode, "import java.") {
+		return h.detector.DetectFromSourceJava(sourceCode, filePath), nil
+	}
+
+	// Default to JS/TS detection (most common for web projects)
+	return h.detector.DetectFromSourceJS(sourceCode, filePath), nil
 }
 
 // generateExplanation produces a human-readable cost explanation for a finding.
