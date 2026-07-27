@@ -203,8 +203,8 @@ func (s *SSETransport) Send(ctx context.Context, msg *rpc.Response) error {
 		case c.events <- data:
 		case <-c.done:
 			// Client already disconnected, skip.
-		case <-ctx.Done():
-			return ctx.Err()
+		default:
+			// Channel buffer full
 		}
 	}
 	return nil
