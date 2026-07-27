@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -137,6 +138,8 @@ func (s *SSETransport) Start(ctx context.Context, handler MessageHandler) error 
 	mux.HandleFunc("/sse", s.handleSSE)
 	mux.HandleFunc("/healthz", s.handleHealthz)
 	mux.HandleFunc("/metrics", s.handleMetrics)
+	// Streamable HTTP: POST to root URL (Kiro and other MCP clients use this)
+	mux.HandleFunc("/", s.handleStreamableHTTP)
 
 	server := &http.Server{
 		Handler: mux,
@@ -228,8 +231,12 @@ func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
+	// Debug: log the raw request
+	slog.Debug("incoming request", "method", r.Method, "path", r.URL.Path, "query", r.URL.RawQuery, "body", string(body))
+
 	req, err := rpc.ParseRequest(body)
 	if err != nil {
+		slog.Warn("failed to parse request", "error", err, "body", string(body))
 		// Return the parse/validation error as a JSON-RPC error response.
 		if rpcErr, ok := err.(*rpc.RPCError); ok {
 			writeJSONError(w, nil, rpcErr.Code, rpcErr.Message)
@@ -238,6 +245,8 @@ func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	slog.Debug("parsed request", "method", req.Method, "id", req.ID, "params", string(req.Params))
 
 	// Correlate this request with the caller's SSE session (if any) so that
 	// asynchronous notifications can be routed back to the originating client.
@@ -332,6 +341,96 @@ func (s *SSETransport) removeClient(c *sseClient) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.clients, c.id)
+}
+
+// handleStreamableHTTP handles POST and GET requests at the root URL.
+// This implements the MCP Streamable HTTP transport where:
+// - POST: Client sends JSON-RPC requests, server responds with JSON or SSE
+// - GET: Client establishes SSE stream for server-initiated notifications
+func (s *SSETransport) handleStreamableHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		s.handleStreamableHTTPPost(w, r)
+	case http.MethodGet:
+		// Streamable HTTP GET: establish SSE stream for notifications
+		s.handleSSE(w, r)
+	case http.MethodOptions:
+		// CORS preflight
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id")
+		w.WriteHeader(http.StatusOK)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleStreamableHTTPPost handles POST requests for Streamable HTTP transport.
+// It reads a JSON-RPC request and responds with either:
+// - application/json for simple responses
+// - text/event-stream for responses that need to stream notifications
+func (s *SSETransport) handleStreamableHTTPPost(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeJSONError(w, nil, rpc.CodeParseError, "failed to read request body")
+		return
+	}
+	defer r.Body.Close()
+
+	slog.Info("streamable HTTP request", "path", r.URL.Path, "body_len", len(body))
+
+	req, err := rpc.ParseRequest(body)
+	if err != nil {
+		slog.Warn("failed to parse streamable request", "error", err, "body", string(body))
+		if rpcErr, ok := err.(*rpc.RPCError); ok {
+			writeJSONError(w, nil, rpcErr.Code, rpcErr.Message)
+		} else {
+			writeJSONError(w, nil, rpc.CodeParseError, err.Error())
+		}
+		return
+	}
+
+	slog.Info("parsed streamable request", "method", req.Method, "id", req.ID)
+
+	// Get session ID from query params or header
+	sessionID := r.URL.Query().Get("sessionId")
+	if sessionID == "" {
+		sessionID = r.Header.Get("Mcp-Session-Id")
+	}
+	ctx := rpc.WithClientID(r.Context(), sessionID)
+
+	resp, err := s.handler(ctx, req)
+	if err != nil {
+		writeJSONError(w, req.ID, rpc.CodeInternalError, err.Error())
+		return
+	}
+
+	// For notifications (no ID), we might need to send via SSE
+	if req.ID == nil {
+		// Server-initiated notification - send to SSE clients if connected
+		if sessionID != "" {
+			data, _ := json.Marshal(resp)
+			s.Send(ctx, &rpc.Response{
+				JSONRPC: "2.0",
+				Method:  req.Method,
+				Params:  data,
+			})
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	// Regular response - send as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Mcp-Session-Id", sessionID)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		return
+	}
 }
 
 // handleHealthz serves GET /healthz for liveness and readiness probes. Returns
