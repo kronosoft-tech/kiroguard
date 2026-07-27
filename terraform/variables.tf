@@ -34,6 +34,12 @@ variable "container_image" {
   default     = "kronosoft/kiroguard:latest"
 }
 
+variable "deploy_branch" {
+  description = "Git branch to build the KiroGuard container from on the EC2 instance"
+  type        = string
+  default     = "develop"
+}
+
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string

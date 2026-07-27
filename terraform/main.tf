@@ -188,12 +188,12 @@ resource "aws_eip" "kiroguard" {
 # ─── EC2 Instance ───────────────────────────────────────────────────────────
 
 resource "aws_instance" "kiroguard" {
-  ami                  = data.aws_ami.amazon_linux_2023.id
-  instance_type        = var.instance_type
-  subnet_id            = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.kiroguard.id]
-  iam_instance_profile = aws_iam_instance_profile.ec2_profile.name
-  key_name             = var.key_name != "" ? var.key_name : null
+  ami                         = data.aws_ami.amazon_linux_2023.id
+  instance_type               = var.instance_type
+  subnet_id                   = aws_subnet.public.id
+  vpc_security_group_ids      = [aws_security_group.kiroguard.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+  key_name                    = var.key_name != "" ? var.key_name : null
   user_data_replace_on_change = true
 
   user_data = <<-EOF
@@ -213,9 +213,12 @@ resource "aws_instance" "kiroguard" {
                 chmod +x /usr/libexec/docker/cli-plugins/docker-compose
               }
 
-              # Create app directory & build KiroGuard container
+              # Create app directory & build KiroGuard container from the deploy branch.
+              # IMPORTANT: build from '${var.deploy_branch}' so the instance ships the
+              # transport fixes (Streamable HTTP POST /sse + SSE response dispatch),
+              # not the default branch which may be stale.
               mkdir -p /opt/kiroguard
-              git clone https://github.com/kronosoft-tech/kiroguard.git /opt/kiroguard-src || true
+              git clone --branch ${var.deploy_branch} --depth 1 https://github.com/kronosoft-tech/kiroguard.git /opt/kiroguard-src || true
               if [ -d /opt/kiroguard-src ]; then
                 docker build -t kiroguard:local /opt/kiroguard-src || docker pull ${var.container_image}
               fi
