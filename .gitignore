@@ -3,6 +3,7 @@
 
 # Binarios locales
 kiroguard
+kiroguard-scan
 /tmp/
 
 # Variables de entorno y secretos
@@ -13,6 +14,7 @@ kiroguard
 # Terraform state y credenciales locales
 *.tfstate
 *.tfstate.backup
+*.tfstate.lock.info
 .terraform/
 terraform/terraform.tfvars
 terraform/.terraform/

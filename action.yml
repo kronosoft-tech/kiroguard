@@ -1,0 +1,46 @@
+name: 'KiroGuard Enterprise Scanner'
+description: 'Preventive security, architecture, IAM, and FinOps quality guardrail for PRs and CI/CD pipelines.'
+author: 'KiroGuard Team'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  target_directory:
+    description: 'Path to directory to scan'
+    required: false
+    default: '.'
+  config_file:
+    description: 'Path to optional YAML configuration file'
+    required: false
+    default: ''
+  fail_on_high_severity:
+    description: 'Exit with non-zero status code if critical security issues (secrets, IAM wildcards) are found'
+    required: false
+    default: 'true'
+  go_version:
+    description: 'Go toolchain version for building KiroGuard scanner'
+    required: false
+    default: '1.26.5'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ inputs.go_version }}
+
+    - name: Build KiroGuard Scanner
+      shell: bash
+      run: |
+        go build -o kiroguard-scan ./cmd/kiroguard-scan
+
+    - name: Execute KiroGuard Scan
+      shell: bash
+      run: |
+        ./kiroguard-scan \
+          -target "${{ inputs.target_directory }}" \
+          -config "${{ inputs.config_file }}" \
+          -fail-on-high="${{ inputs.fail_on_high_severity }}" \
+          -format="github"

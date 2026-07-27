@@ -1,0 +1,22 @@
+name: KiroGuard PR Guardrail
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  kiroguard-scan:
+    name: 🛡️ KiroGuard Security & Quality Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run KiroGuard Enterprise Action
+        uses: ./
+        with:
+          target_directory: '.'
+          fail_on_high_severity: 'true'
