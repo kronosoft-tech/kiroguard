@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -191,20 +192,23 @@ func (s *SSETransport) Send(ctx context.Context, msg *rpc.Response) error {
 		}
 	}
 	if len(targets) == 0 {
-		targets = make([]*sseClient, 0, len(s.clients))
 		for _, c := range s.clients {
 			targets = append(targets, c)
 		}
 	}
+	clientCount := len(s.clients)
 	s.mu.Unlock()
+
+	slog.Info("SSE Send message", "module", "sse", "targetID", targetID, "matchedTargets", len(targets), "totalClients", clientCount)
 
 	for _, c := range targets {
 		select {
 		case c.events <- data:
+			slog.Info("SSE message queued for client", "module", "sse", "clientID", c.id)
 		case <-c.done:
-			// Client already disconnected, skip.
+			slog.Warn("SSE client done", "module", "sse", "clientID", c.id)
 		default:
-			// Channel buffer full
+			slog.Warn("SSE client queue full", "module", "sse", "clientID", c.id)
 		}
 	}
 	return nil
@@ -294,8 +298,14 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 		done:   make(chan struct{}),
 	}
 
+	ctx := r.Context()
+
 	s.addClient(client)
-	defer s.removeClient(client)
+	slog.Info("SSE client connected", "module", "sse", "clientID", client.id)
+	defer func() {
+		slog.Info("SSE client disconnected", "module", "sse", "clientID", client.id, "err", ctx.Err())
+		s.removeClient(client)
+	}()
 
 	// Tell the client which endpoint to POST to, tagged with its session id.
 	// This mirrors the MCP HTTP+SSE "endpoint" event and lets the server route
@@ -307,14 +317,12 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	// Use the request context to detect client disconnect.
-	ctx := r.Context()
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case data := <-client.events:
+			slog.Info("SSE flushing message to client", "module", "sse", "clientID", client.id, "len", len(data))
 			// Send data as an SSE event named "message" per MCP specification.
 			fmt.Fprintf(w, "event: message\ndata: %s\n\n", data)
 			flusher.Flush()
