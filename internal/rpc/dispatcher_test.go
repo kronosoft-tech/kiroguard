@@ -189,12 +189,11 @@ func TestDispatch_NilID(t *testing.T) {
 		Method:  "notify",
 	}
 
+	// Per JSON-RPC 2.0 §4 and MCP spec: requests without an id are notifications.
+	// The server MUST NOT send a response — Dispatch returns nil.
 	resp := d.Dispatch(context.Background(), req)
-	if resp.Error != nil {
-		t.Fatalf("expected success, got error: %v", resp.Error)
-	}
-	if resp.ID != nil {
-		t.Error("expected nil ID in response for notification")
+	if resp != nil {
+		t.Fatalf("expected nil response for notification, got: %+v", resp)
 	}
 }
 

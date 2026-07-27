@@ -253,6 +253,13 @@ func (s *SSETransport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// nil response means the request was a notification (no id); per JSON-RPC 2.0
+	// §4 the server MUST NOT send a response for notifications.
+	if resp == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	// Dispatch response over the SSE stream for MCP SSEClientTransport compatibility
 	_ = s.Send(ctx, resp)
 

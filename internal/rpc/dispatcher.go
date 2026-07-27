@@ -50,6 +50,12 @@ func (d *Dispatcher) dispatchSafe(ctx context.Context, req *Request) (resp *Resp
 		}
 	}()
 
+	// JSON-RPC 2.0 §4: notifications have no "id". Per MCP spec, the server
+	// MUST NOT send a response for notifications (e.g. notifications/initialized).
+	if req.ID == nil {
+		return nil
+	}
+
 	d.mu.RLock()
 	handler, ok := d.handlers[req.Method]
 	d.mu.RUnlock()

@@ -234,6 +234,9 @@ func TestSSETransport_SSE_ReceivesBroadcast(t *testing.T) {
 				return
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			t.Logf("SSE scanner error: %v", err)
+		}
 	}()
 
 	select {
@@ -303,6 +306,9 @@ func TestSSETransport_SSE_KeepaliveWithin35Seconds(t *testing.T) {
 				dataCh <- true
 				return
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			t.Logf("SSE scanner error: %v", err)
 		}
 		dataCh <- false
 	}()
