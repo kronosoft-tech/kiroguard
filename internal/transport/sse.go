@@ -189,8 +189,8 @@ func (s *SSETransport) Send(ctx context.Context, msg *rpc.Response) error {
 		if c, ok := s.clients[targetID]; ok {
 			targets = append(targets, c)
 		}
-		// Unknown/disconnected session → nothing to deliver.
-	} else {
+	}
+	if len(targets) == 0 {
 		targets = make([]*sseClient, 0, len(s.clients))
 		for _, c := range s.clients {
 			targets = append(targets, c)
