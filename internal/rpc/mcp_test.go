@@ -101,17 +101,20 @@ func TestHandleToolsList(t *testing.T) {
 		t.Fatalf("failed to unmarshal result: %v", err)
 	}
 
-	// Verify exactly 4 tools are returned
-	if len(result.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(result.Tools))
+	// Verify exactly 7 tools are returned
+	if len(result.Tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(result.Tools))
 	}
 
 	// Verify the expected tool names
 	expectedNames := map[string]bool{
-		"envguard/scan":     true,
-		"vulnscanner/scan":  true,
-		"cleanarch/analyze": true,
-		"finops/analyze":    true,
+		"envguard/scan":       true,
+		"vulnscanner/scan":    true,
+		"cleanarch/analyze":   true,
+		"finops/analyze":      true,
+		"iamguard/analyze":    true,
+		"lambdaguard/analyze": true,
+		"piiguard/scan":       true,
 	}
 
 	for _, tool := range result.Tools {
@@ -242,8 +245,8 @@ func TestHandleToolsList_EnvguardSchema(t *testing.T) {
 
 func TestMCPTools_Count(t *testing.T) {
 	tools := mcpTools()
-	if len(tools) != 4 {
-		t.Errorf("expected 4 MCP tools, got %d", len(tools))
+	if len(tools) != 7 {
+		t.Errorf("expected 7 MCP tools, got %d", len(tools))
 	}
 }
 

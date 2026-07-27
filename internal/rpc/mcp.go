@@ -123,6 +123,72 @@ func mcpTools() []Tool {
 				"required": []string{"source_code", "file_path"},
 			},
 		},
+		{
+			Name:        "iamguard/analyze",
+			Description: "Analyze a Go project for IAM least-privilege violations: infer the AWS IAM actions required by the code's SDK calls and flag wildcard (Action/Resource \"*\") statements in Infrastructure-as-Code.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"directory_path": map[string]interface{}{
+						"type":        "string",
+						"description": "The root directory path of the Go project to analyze.",
+					},
+				},
+				"required": []string{"directory_path"},
+			},
+		},
+		{
+			Name:        "lambdaguard/analyze",
+			Description: "Analyze AWS Lambda / serverless configurations for security issues: overly-permissive IAM, secrets in environment variables, and best-practice violations.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"directory_path": map[string]interface{}{
+						"type":        "string",
+						"description": "The root directory path containing serverless configuration to analyze.",
+					},
+					"severity_threshold": map[string]interface{}{
+						"type":        "string",
+						"description": "Minimum severity to report. Defaults to \"low\".",
+						"enum":        []string{"low", "medium", "high", "critical"},
+					},
+					"checks": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional subset of best-practice checks to run. Runs all checks if omitted.",
+						"items":       map[string]interface{}{"type": "string"},
+					},
+				},
+				"required": []string{"directory_path"},
+			},
+		},
+		{
+			Name:        "piiguard/scan",
+			Description: "Scan a directory for PII and privacy/compliance leaks (emails, credit cards, high-entropy secrets) and classify findings by severity.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"directory_path": map[string]interface{}{
+						"type":        "string",
+						"description": "The root directory path to scan for PII.",
+					},
+					"severity_threshold": map[string]interface{}{
+						"type":        "string",
+						"description": "Minimum severity to report. Defaults to \"low\".",
+						"enum":        []string{"low", "medium", "high", "critical"},
+					},
+					"patterns": map[string]interface{}{
+						"type":        "array",
+						"description": "Optional subset of PII pattern names to match. Uses the default pattern set if omitted.",
+						"items":       map[string]interface{}{"type": "string"},
+					},
+					"entropy_check": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether to run entropy-based secret detection. Defaults to true.",
+					},
+				},
+				"required": []string{"directory_path"},
+			},
+		},
 	}
 }
 
