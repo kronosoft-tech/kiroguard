@@ -280,6 +280,10 @@ func (s *SSETransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Disable response buffering on reverse proxies (nginx/ingress). Without this
+	// the proxy holds the SSE stream and MCP clients never receive the endpoint
+	// or message events, causing the initialize handshake to time out.
+	w.Header().Set("X-Accel-Buffering", "no")
 
 	// Flush headers immediately so the client gets a response.
 	flusher.Flush()

@@ -697,3 +697,30 @@ func TestSSETransport_Send_RoutesToSpecificSession(t *testing.T) {
 		// Expected: no message routed to B.
 	}
 }
+
+// TestSSETransport_SSE_DisablesProxyBuffering guards the header that prevents
+// nginx/ingress proxies from buffering the SSE stream — without it, events
+// (endpoint + message) are held by the proxy and MCP clients time out.
+func TestSSETransport_SSE_DisablesProxyBuffering(t *testing.T) {
+	transport := NewSSETransport(":0")
+	transport.handler = echoHandler
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/sse", transport.handleSSE)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/sse", nil)
+	resp, err := (&http.Client{}).Do(req)
+	if err != nil {
+		t.Fatalf("GET /sse failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("X-Accel-Buffering"); got != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want \"no\" (SSE behind a proxy must not be buffered)", got)
+	}
+}
