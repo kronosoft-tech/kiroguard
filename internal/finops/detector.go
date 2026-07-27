@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"regexp"
 	"strings"
 )
 
@@ -295,4 +296,385 @@ func isLambdaCreateType(name string) bool {
 		}
 	}
 	return false
+}
+
+// ============================================================================
+// JavaScript/TypeScript Support
+// ============================================================================
+
+// jsDBCallPatterns contains regex patterns for JS/TS ORM/database calls
+var jsDBCallPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\.(?:find|findOne|findAll|findById|findByPk|query|exec|scan|get|create|update|destroy)\s*\(`),
+	regexp.MustCompile(`\.(?:execute|prepare|run|get|all)\s*\(`),
+	regexp.MustCompile(`(?:prisma|sequelize|typeorm|mongoose|knex)\s*\.\s*\w+`),
+}
+
+// jsDynamoDBPatterns contains regex patterns for DynamoDB operations
+var jsDynamoDBPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?:dynamodb|docClient)\s*\.\s*(?:scan|query)\s*\(`),
+	regexp.MustCompile(`new\s+ScanCommand\s*\(`),
+	regexp.MustCompile(`new\s+QueryCommand\s*\(`),
+	regexp.MustCompile(`\.scan\s*\(\s*\{`),
+}
+
+// jsLambdaPatterns contains regex patterns for Lambda function creation
+var jsLambdaPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`new\s+Function\s*\(\s*\{`),
+	regexp.MustCompile(`(?:runtime|memorySize|timeout)\s*:`),
+}
+
+// DetectFromSourceJS analyzes JavaScript/TypeScript source code and returns detected expensive patterns.
+func (d *PatternDetector) DetectFromSourceJS(source string, filePath string) []DetectedPattern {
+	var patterns []DetectedPattern
+	lines := strings.Split(source, "\n")
+
+	// Track if we're inside a loop
+	inLoop := false
+	loopDepth := 0
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lineNum := i + 1
+
+		// Track loop nesting
+		if isJSLoopStart(trimmed) {
+			if loopDepth == 0 {
+				inLoop = true
+			}
+			loopDepth++
+		}
+		if isJSLoopEnd(trimmed) {
+			loopDepth--
+			if loopDepth <= 0 {
+				inLoop = false
+				loopDepth = 0
+			}
+		}
+
+		// N+1 query detection: DB call inside a loop
+		if inLoop && hasJSDBCall(trimmed) {
+			patterns = append(patterns, DetectedPattern{
+				PatternType: PatternN1Query,
+				FilePath:    filePath,
+				LineNumber:  lineNum,
+				Details:     "Database call inside a loop (N+1 query pattern)",
+			})
+		}
+
+		// Unpaginated DynamoDB scan detection
+		if p := detectJSDynamoDBScan(trimmed, lines, i, filePath, lineNum); p != nil {
+			patterns = append(patterns, *p)
+		}
+	}
+
+	return patterns
+}
+
+// isJSLoopStart checks if a line starts a JS/TS loop
+func isJSLoopStart(line string) bool {
+	loopPatterns := []string{
+		"for (", "for(", "forEach(", ".forEach(",
+		"while (", "while(",
+	}
+	for _, p := range loopPatterns {
+		if strings.Contains(line, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isJSLoopEnd checks if a line ends a JS/TS loop (closing brace)
+func isJSLoopEnd(line string) bool {
+	return line == "}" || strings.HasPrefix(line, "}")
+}
+
+// hasJSDBCall checks if a line contains a JS/TS database call
+func hasJSDBCall(line string) bool {
+	for _, pattern := range jsDBCallPatterns {
+		if pattern.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectJSDynamoDBScan detects unpaginated DynamoDB scans in JS/TS
+func detectJSDynamoDBScan(line string, allLines []string, currentIdx int, filePath string, lineNum int) *DetectedPattern {
+	for _, pattern := range jsDynamoDBPatterns {
+		if pattern.MatchString(line) {
+			// Check if Limit is present in the same line or nearby lines (look up to 5 lines ahead)
+			if hasLimitInNearbyLines(allLines, currentIdx, 5) {
+				return nil
+			}
+			return &DetectedPattern{
+				PatternType: PatternUnpaginatedScan,
+				FilePath:    filePath,
+				LineNumber:  lineNum,
+				Details:     "DynamoDB scan/query without Limit parameter (unpaginated)",
+			}
+		}
+	}
+	return nil
+}
+
+// hasLimitInNearbyLines checks if a Limit/limit/maxResults/MaxResults field appears
+// within a window of maxLookahead lines before and after startIdx.
+func hasLimitInNearbyLines(lines []string, startIdx, maxLookahead int) bool {
+	// Search backward from startIdx (for cases like Java builder pattern where
+	// .limit() is set before the .scan() call)
+	start := startIdx - maxLookahead
+	if start < 0 {
+		start = 0
+	}
+	// Search forward from startIdx
+	end := startIdx + maxLookahead + 1
+	if end > len(lines) {
+		end = len(lines)
+	}
+	for i := start; i < end; i++ {
+		l := lines[i]
+		if strings.Contains(l, "Limit") || strings.Contains(l, "limit") ||
+			strings.Contains(l, "maxResults") || strings.Contains(l, "MaxResults") {
+			return true
+		}
+		// Stop looking forward if we hit a closing paren/brace that ends the object
+		if i >= startIdx {
+			trimmed := strings.TrimSpace(l)
+			if trimmed == "}));" || trimmed == "}))" || trimmed == "});" || trimmed == "})" {
+				break
+			}
+		}
+	}
+	return false
+}
+
+// ============================================================================
+// Python Support
+// ============================================================================
+
+// pyDBCallPatterns contains regex patterns for Python ORM/database calls
+var pyDBCallPatterns = []*regexp.Regexp{
+	// SQLAlchemy
+	regexp.MustCompile(`\.(?:query|filter|filter_by|get|all|first|count|scalar|execute)\s*\(`),
+	// Django ORM
+	regexp.MustCompile(`(?:objects\.\s*(?:filter|get|all|exclude|select_related|prefetch_related))\s*\(`),
+	// Django raw queries
+	regexp.MustCompile(`(?:cursor\.\s*(?:execute|fetchone|fetchall))\s*\(`),
+	// psycopg2 / asyncpg
+	regexp.MustCompile(`(?:await\s+)?(?:conn|connection|pool)\.\s*(?:fetch|execute|fetchrow|fetchval)\s*\(`),
+	// MySQL/PostgreSQL connectors
+	regexp.MustCompile(`(?:cursor\.\s*(?:execute|executemany|fetchone|fetchall))\s*\(`),
+}
+
+// pyDynamoDBPatterns contains regex patterns for Python DynamoDB operations
+var pyDynamoDBPatterns = []*regexp.Regexp{
+	// boto3 resource
+	regexp.MustCompile(`(?:table|dynamodb)\s*\.\s*(?:scan|query)\s*\(`),
+	// boto3 client
+	regexp.MustCompile(`(?:client|dynamodb)\s*\.\s*(?:scan|query)\s*\(`),
+	// aioboto3
+	regexp.MustCompile(`await\s+\w+\.\s*(?:scan|query)\s*\(`),
+}
+
+// DetectFromSourcePython analyzes Python source code and returns detected expensive patterns.
+func (d *PatternDetector) DetectFromSourcePython(source string, filePath string) []DetectedPattern {
+	var patterns []DetectedPattern
+	lines := strings.Split(source, "\n")
+
+	// Track Python loops using a stack of indentation levels
+	type loopEntry struct{ indent int }
+	var loopStack []loopEntry
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lineNum := i + 1
+		indent := pythonIndent(line)
+
+		// Pop loops whose scope has ended (indent <= loop start indent)
+		for len(loopStack) > 0 && indent <= loopStack[len(loopStack)-1].indent {
+			loopStack = loopStack[:len(loopStack)-1]
+		}
+
+		// Push new loop if this line starts one
+		if isPythonLoopStart(trimmed) {
+			loopStack = append(loopStack, loopEntry{indent: indent})
+		}
+
+		// N+1 query detection: DB call inside a loop
+		if len(loopStack) > 0 && hasPythonDBCall(trimmed) {
+			patterns = append(patterns, DetectedPattern{
+				PatternType: PatternN1Query,
+				FilePath:    filePath,
+				LineNumber:  lineNum,
+				Details:     "Database call inside a loop (N+1 query pattern)",
+			})
+		}
+
+		// Unpaginated DynamoDB scan detection
+		if p := detectPythonDynamoDBScan(trimmed, lines, i, filePath, lineNum); p != nil {
+			patterns = append(patterns, *p)
+		}
+	}
+
+	return patterns
+}
+
+// isPythonLoopStart checks if a line starts a Python loop
+func isPythonLoopStart(line string) bool {
+	return strings.HasPrefix(line, "for ") || strings.HasPrefix(line, "while ")
+}
+
+// pythonIndent returns the indentation level of a line in spaces (tabs = 4)
+func pythonIndent(line string) int {
+	indent := 0
+	for _, ch := range line {
+		if ch == ' ' {
+			indent++
+		} else if ch == '\t' {
+			indent += 4
+		} else {
+			break
+		}
+	}
+	return indent
+}
+
+// hasPythonDBCall checks if a line contains a Python database call
+func hasPythonDBCall(line string) bool {
+	for _, pattern := range pyDBCallPatterns {
+		if pattern.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectPythonDynamoDBScan detects unpaginated DynamoDB scans in Python
+func detectPythonDynamoDBScan(line string, allLines []string, currentIdx int, filePath string, lineNum int) *DetectedPattern {
+	for _, pattern := range pyDynamoDBPatterns {
+		if pattern.MatchString(line) {
+			// Check if Limit is present in nearby lines
+			if hasLimitInNearbyLines(allLines, currentIdx, 5) {
+				return nil
+			}
+			return &DetectedPattern{
+				PatternType: PatternUnpaginatedScan,
+				FilePath:    filePath,
+				LineNumber:  lineNum,
+				Details:     "DynamoDB scan/query without Limit parameter (unpaginated)",
+			}
+		}
+	}
+	return nil
+}
+
+// ============================================================================
+// Java Support
+// ============================================================================
+
+// javaDBCallPatterns contains regex patterns for Java ORM/database calls
+var javaDBCallPatterns = []*regexp.Regexp{
+	// JPA/Hibernate
+	regexp.MustCompile(`(?:entityManager|em|repository)\s*\.\s*(?:find|findBy|findAll|query|createQuery|createNativeQuery|getReference)\s*\(`),
+	// Spring Data
+	regexp.MustCompile(`(?:findAll|findById|findBy|count|exists|deleteById)\s*\(`),
+	// JDBC
+	regexp.MustCompile(`(?:statement|ps|rs)\s*\.\s*(?:executeQuery|execute|next|getString|getInt)\s*\(`),
+	// MyBatis
+	regexp.MustCompile(`(?:mapper|sqlSession)\s*\.\s*(?:select|insert|update|delete)\s*\(`),
+}
+
+// javaDynamoDBPatterns contains regex patterns for Java DynamoDB operations
+var javaDynamoDBPatterns = []*regexp.Regexp{
+	// AWS SDK v2
+	regexp.MustCompile(`(?:dynamoDbClient|dynamodb)\s*\.\s*(?:scan|query)\s*\(`),
+	regexp.MustCompile(`ScanRequest\.builder\s*\(\)|QueryRequest\.builder\s*\(\)`),
+}
+
+// DetectFromSourceJava analyzes Java source code and returns detected expensive patterns.
+func (d *PatternDetector) DetectFromSourceJava(source string, filePath string) []DetectedPattern {
+	var patterns []DetectedPattern
+	lines := strings.Split(source, "\n")
+
+	// Track if we're inside a loop
+	inLoop := false
+	loopDepth := 0
+
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		lineNum := i + 1
+
+		// Track loop nesting
+		if isJavaLoopStart(trimmed) {
+			if loopDepth == 0 {
+				inLoop = true
+			}
+			loopDepth++
+		}
+		if isJavaLoopEnd(trimmed) {
+			loopDepth--
+			if loopDepth <= 0 {
+				inLoop = false
+				loopDepth = 0
+			}
+		}
+
+		// N+1 query detection: DB call inside a loop
+		if inLoop && hasJavaDBCall(trimmed) {
+			patterns = append(patterns, DetectedPattern{
+				PatternType: PatternN1Query,
+				FilePath:    filePath,
+				LineNumber:  lineNum,
+				Details:     "Database call inside a loop (N+1 query pattern)",
+			})
+		}
+
+		// Unpaginated DynamoDB scan detection
+		if p := detectJavaDynamoDBScan(trimmed, lines, i, filePath, lineNum); p != nil {
+			patterns = append(patterns, *p)
+		}
+	}
+
+	return patterns
+}
+
+// isJavaLoopStart checks if a line starts a Java loop
+func isJavaLoopStart(line string) bool {
+	return strings.HasPrefix(line, "for (") || strings.HasPrefix(line, "for(") ||
+		strings.HasPrefix(line, "while (") || strings.HasPrefix(line, "while(")
+}
+
+// isJavaLoopEnd checks if a line ends a Java loop (closing brace)
+func isJavaLoopEnd(line string) bool {
+	return line == "}" || strings.HasPrefix(line, "}")
+}
+
+// hasJavaDBCall checks if a line contains a Java database call
+func hasJavaDBCall(line string) bool {
+	for _, pattern := range javaDBCallPatterns {
+		if pattern.MatchString(line) {
+			return true
+		}
+	}
+	return false
+}
+
+// detectJavaDynamoDBScan detects unpaginated DynamoDB scans in Java
+func detectJavaDynamoDBScan(line string, allLines []string, currentIdx int, filePath string, lineNum int) *DetectedPattern {
+	for _, pattern := range javaDynamoDBPatterns {
+		if pattern.MatchString(line) {
+			// Check if Limit is present in nearby lines
+			if hasLimitInNearbyLines(allLines, currentIdx, 5) {
+				return nil
+			}
+			return &DetectedPattern{
+				PatternType: PatternUnpaginatedScan,
+				FilePath:    filePath,
+				LineNumber:  lineNum,
+				Details:     "DynamoDB scan/query without Limit parameter (unpaginated)",
+			}
+		}
+	}
+	return nil
 }
