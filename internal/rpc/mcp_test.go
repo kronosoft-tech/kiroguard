@@ -101,9 +101,9 @@ func TestHandleToolsList(t *testing.T) {
 		t.Fatalf("failed to unmarshal result: %v", err)
 	}
 
-	// Verify exactly 4 tools are returned
-	if len(result.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d", len(result.Tools))
+	// Verify exactly 7 tools are returned
+	if len(result.Tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(result.Tools))
 	}
 
 	// Verify the expected tool names
@@ -112,6 +112,9 @@ func TestHandleToolsList(t *testing.T) {
 		"vulnscanner/scan":  true,
 		"cleanarch/analyze": true,
 		"finops/analyze":    true,
+		"lambdaguard/analyze": true,
+		"iamguard/analyze":  true,
+		"piiguard/scan":     true,
 	}
 
 	for _, tool := range result.Tools {
@@ -242,8 +245,125 @@ func TestHandleToolsList_EnvguardSchema(t *testing.T) {
 
 func TestMCPTools_Count(t *testing.T) {
 	tools := mcpTools()
-	if len(tools) != 4 {
-		t.Errorf("expected 4 MCP tools, got %d", len(tools))
+	if len(tools) != 7 {
+		t.Errorf("expected 7 MCP tools, got %d", len(tools))
+	}
+}
+
+func TestHandleToolsCall_Success(t *testing.T) {
+	d := NewDispatcher()
+	RegisterMCPHandlers(d)
+
+	// Register a test tool handler
+	d.Register("test/tool", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return "tool executed successfully", nil
+	})
+
+	id := json.RawMessage(`10`)
+	params := json.RawMessage(`{"name":"test/tool","arguments":{"key":"value"}}`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "tools/call",
+		Params:  params,
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error != nil {
+		t.Fatalf("expected success, got error: %v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	var result ToolCallResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if len(result.Content) != 1 {
+		t.Fatalf("expected 1 content item, got %d", len(result.Content))
+	}
+	if result.Content[0].Type != "text" {
+		t.Errorf("expected content type 'text', got %q", result.Content[0].Type)
+	}
+	if result.Content[0].Text != "tool executed successfully" {
+		t.Errorf("unexpected text: %q", result.Content[0].Text)
+	}
+	if result.IsError {
+		t.Error("expected isError=false")
+	}
+}
+
+func TestHandleToolsCall_UnknownTool(t *testing.T) {
+	d := NewDispatcher()
+	RegisterMCPHandlers(d)
+
+	id := json.RawMessage(`11`)
+	params := json.RawMessage(`{"name":"unknown/tool","arguments":{}}`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "tools/call",
+		Params:  params,
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error != nil {
+		t.Fatalf("expected success response (tool error), got RPC error: %v", resp.Error)
+	}
+
+	var result ToolCallResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+
+	if !result.IsError {
+		t.Error("expected isError=true for unknown tool")
+	}
+}
+
+func TestHandleToolsCall_EmptyName(t *testing.T) {
+	d := NewDispatcher()
+	RegisterMCPHandlers(d)
+
+	id := json.RawMessage(`12`)
+	params := json.RawMessage(`{"name":"","arguments":{}}`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "tools/call",
+		Params:  params,
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error == nil {
+		t.Fatal("expected error for empty tool name")
+	}
+	if resp.Error.Code != CodeInvalidParams {
+		t.Errorf("expected InvalidParams error, got code %d", resp.Error.Code)
+	}
+}
+
+func TestHandleToolsCall_InvalidParams(t *testing.T) {
+	d := NewDispatcher()
+	RegisterMCPHandlers(d)
+
+	id := json.RawMessage(`13`)
+	params := json.RawMessage(`{invalid json}`)
+	req := &Request{
+		JSONRPC: "2.0",
+		ID:      &id,
+		Method:  "tools/call",
+		Params:  params,
+	}
+
+	resp := d.Dispatch(context.Background(), req)
+	if resp.Error == nil {
+		t.Fatal("expected error for invalid params")
+	}
+	if resp.Error.Code != CodeInvalidParams {
+		t.Errorf("expected InvalidParams error, got code %d", resp.Error.Code)
 	}
 }
 
