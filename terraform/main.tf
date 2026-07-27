@@ -222,9 +222,14 @@ resource "aws_instance" "kiroguard" {
 
               cd /opt/kiroguard
 
-              # Write Caddyfile
+              # Write Caddyfile for FreeDNS / nip.io HTTPS & SSE reverse proxying
               cat << 'CADDY_EOF' > /opt/kiroguard/Caddyfile
               ${var.freedns_domain} {
+                  @sse path /sse* /message*
+                  header @sse {
+                      Cache-Control "no-cache"
+                      X-Accel-Buffering "no"
+                  }
                   reverse_proxy localhost:3000 {
                       flush_interval -1
                   }
